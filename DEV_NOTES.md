@@ -1657,6 +1657,171 @@ def compress_figure(data: bytes, max_width: int = 1200) -> bytes:
 
 ---
 
+## 问题十七：翻译后原文面板变宽挤占译文空间
+
+### 背景
+
+翻译/重新翻译后，原文面板宽度变宽，挤占了右侧译文面板的空间，只有重启服务器才能恢复。
+
+### 分析
+
+`DualPaneReader` 中左右面板用 `flex-1 min-w-0` 分配宽度。翻译完成后，面板内容从空 `<div>` 切换到完整 `DocumentView`（含 HTML 表格、KaTeX 公式）。`min-w-0` 在某些浏览器下无法压制 table/公式的固有最小宽度，内容撑开面板。
+
+### 解决方案
+
+**1. 面板容器从 Flexbox 改 CSS Grid**
+
+```tsx
+// 修复前：Flexbox
+<div className="flex-1 flex min-h-0">
+
+// 修复后：CSS Grid 强制 50/50
+<div className="flex-1 grid grid-cols-1 lg:grid-cols-2 min-h-0">
+```
+
+移除各面板的 `flex-1`，保留 `min-w-0`。Grid 的 `1fr 1fr` 不受内容宽度影响。
+
+**2. CSS 溢出保护**
+
+- `.reader-panel`：`overflow-wrap: anywhere; min-width: 0`
+- `.doc-content p`：`word-break: break-word`
+- `.doc-content table`：`table-layout: auto`
+
+### 关键经验
+
+- **Flex `flex-1` + `min-w-0` 在动态内容切换时不可靠**。CSS Grid 是更安全的选择。
+- **Grid 对移动端更友好**：`grid-cols-1 lg:grid-cols-2` 天然支持响应式。
+
+---
+
+## 问题十八：AI 翻译丢失 Markdown 格式 + 中文文本溢出
+
+### 背景
+
+1. AI 翻译后 Markdown 格式标记丢失（`**bold**`→`粗体`，`### heading`→纯文本）
+2. 中文翻译宽度超出可视范围
+
+### 分析
+
+原有 `_protect_formulas()` 只保护 LaTeX，Markdown 标记裸露传给 AI。AI 翻译文本但丢弃标记符号。
+
+中文无自然分词，CSS 只有 `.doc-content p` 有 `word-break`，其他元素溢出容器。
+
+### 解决方案
+
+#### Markdown 格式双层保护
+
+八种格式保护模式（[translator.py](file:///d:/pythontest/translation-platform/backend/app/services/translator.py)）：
+
+| 模式 | 匹配 | 策略 |
+|------|------|------|
+| `MD_INLINE_CODE_RE` | `` `code` `` | 替换为 `[MDC_N]` |
+| `MD_ITALIC_RE` | `*italic*` | 替换为 `[MDC_N]` |
+| `MD_BOLD_RE` | `**bold**` | 替换为 `[MDC_N]` |
+| `MD_LINK_RE` | `[text](url)` | 替换为 `[MDC_N]` |
+| `MD_CODE_BLOCK_RE` | ` ```...``` ` | 替换为 `[MDC_N]` |
+| `MD_BLOCKQUOTE_PREFIX_RE` | `> quote` | 替换为 `[MDC_N]` |
+| `MD_LIST_PREFIX_RE` | `- item` / `1. item` | 替换为 `[MDC_N]` |
+| `MD_HEADING_PREFIX_RE` | `### heading` | 替换为 `[MDC_N]` |
+
+保护顺序从小到大（inline code→italic→bold→links→code blocks→blockquote→lists→headings）。
+
+**增强提示词**：12 条明确的 Markdown 保留规则。
+
+#### 中文溢出全面 CSS 修复
+
+为所有 `doc-content` 子元素添加 `word-break: break-word; overflow-wrap: break-word`：
+`h1-h6`, `li`, `blockquote`, `code`, `pre`, `a`, `figcaption`。
+
+### 关键经验
+
+- **格式保护必须在公式保护之后、发送前执行**，还原时反过来。
+- **占位符命名要区分**：`[FORMULA_N]` vs `[MDC_N]`，避免交叉冲突。
+- **中文溢出修复要全面**，不能只修 `p`，必须覆盖所有子元素。
+
+---
+
+## 问题十九：AI 翻译分段逻辑重新设计 — 块感知分裂 + 完整性校验
+
+### 背景
+
+`split_paragraphs()` 用 `re.split(r'\n\s*\n', text)` 盲分割。HTML 表格内空行导致 `<table>` 被切碎分段传给 AI，结果标签错乱、显示损坏。翻译后无校验。
+
+### 分析
+
+需要三个新能力：识别不可分割的原子块、在保持原子性的前提下分块、翻译后验证数据完整性。
+
+### 解决方案：四层防御架构
+
+#### Layer 1 — 原子块识别
+
+`ATOMIC_BLOCK_RE` 统一匹配 5 种原子块：
+
+| 分组 | 类型 | 示例 |
+|------|------|------|
+| 1 | HTML 容器 | `<table>...</table>` |
+| 2 | Fenced code | ` ```...``` ` |
+| 3 | LaTeX 环境 | `\begin{aligned}...\end{aligned}` |
+| 4 | 显示公式 | `$$...$$` |
+| 5 | 多行引用 | `> line1\n> line2` |
+
+`_find_atomic_blocks(text)` → `[(start, end, type), ...]`
+
+#### Layer 2 — 块感知分裂
+
+`_block_aware_split(text)` 核心：**占位符替换 → 分割 → 还原**
+
+```python
+# 1. 原子块 → __ATOMIC_N__
+# 2. 在受保护文本上按 /\n\n+/ 分割
+# 3. __ATOMIC_N__ → 原始内容
+```
+
+原子块内部空行永不触发分裂。
+
+#### Layer 3 — 智能分块
+
+`_smart_chunk_paragraphs` 重写，新增：
+
+- **HTML 块检测**：`HTML_BLOCK_RE` 匹配，HTML 块单独成 chunk
+- **富文本因子**：`_rich_text_factor()` 估计标记占比，有效长度 = 实际长度 × (1 - markup × 0.5)
+- **公式长度补偿**：扣除公式字符
+- **宽限制**：HTML 块 `NORMAL_CHUNK_MAX × 1.5`
+
+#### Layer 4 — 完整性校验
+
+`_validate_chunk_completeness(original, translated, idx)` 四维度：
+
+| 维度 | 阈值 | 含义 |
+|------|------|------|
+| 长度比 | `trans < orig × 0.15` | issue |
+| 空翻译 | `trans == 0` | issue |
+| 格式标记 | 数量不匹配 | warning |
+| 公式数 | 数量不匹配 | warning |
+| 段落数 | 丢失超 50% | warning |
+
+`translate_document_async` 集成校验日志。
+
+### 测试（7 项全通过）
+
+```
+✅ 简单文本 → 3 段
+✅ HTML 表格（4 行） → 完整，闭合正常
+✅ 代码块 → 完整
+✅ LaTeX 环境 → 完整
+✅ 混合文档 → 表格/代码块分别完整
+✅ $$ 内部双空行 → 不分裂
+✅ 分块回归 → 段落数→chunk 数正确
+```
+
+### 关键经验
+
+- **占位符替换法**是最简单的结构化内容保护方式：不需要自己写分段器。
+- **HTML 富文本 chunk 大小**：`table`/`figure` 大多为标记字符，`_rich_text_factor()` 修正有效长度。
+- **长 HTML 块单独成 chunk**：超大 table 独立处理，避免合并后超出 token 限制。
+
+---
+
 ### 9. Print CSS 系统
 
 完整实现文件：[print.css](file:///d:/pythontest/translation-platform/frontend/src/ast/print.css)
