@@ -71,7 +71,33 @@ export function useSyncScroll(
     [enabled, leftRef, rightRef]
   )
 
-  return { handleScroll }
+  const scrollBothProportional = useCallback(
+    (sourcePanel: "left" | "right", offset: number) => {
+      isProgrammatic.current = true
+
+      const sourceEl = sourcePanel === "left" ? leftRef.current : rightRef.current
+      const targetEl = sourcePanel === "left" ? rightRef.current : leftRef.current
+
+      if (sourceEl) {
+        sourceEl.scrollTo({ top: Math.max(0, offset), behavior: "smooth" })
+      }
+
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          if (sourceEl && targetEl) {
+            const sourceRatio =
+              sourceEl.scrollTop / (sourceEl.scrollHeight - sourceEl.clientHeight)
+            targetEl.scrollTop =
+              sourceRatio * (targetEl.scrollHeight - targetEl.clientHeight)
+          }
+          isProgrammatic.current = false
+        }, 300)
+      })
+    },
+    [leftRef, rightRef]
+  )
+
+  return { handleScroll, scrollBothProportional }
 }
 
 export function useAutoSave(key: string, data: unknown, delay: number = 2000) {

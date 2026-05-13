@@ -7,7 +7,7 @@ class MarkdownExporter:
         self.asset_manager = AssetManager()
     
     def _protect_math(self, content: str):
-        math_pattern = r'(\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\\\([^)]+\\\)|\$[^$]+\$)'
+        math_pattern = r'(\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|(?<!\$)\$(?!\$)[^$]+(?<!\$)\$(?!\$))'
         math_blocks = []
         
         def replace_match(match):

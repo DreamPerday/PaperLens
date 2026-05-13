@@ -10,7 +10,7 @@ class HTMLExporter:
         self.template_manager = TemplateManager()
     
     def _protect_math(self, content: str) -> Tuple[str, List[str]]:
-        math_pattern = r'(\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\\\([^)]+\\\)|\$[^$\n]+\$)'
+        math_pattern = r'(\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|(?<!\$)\$(?!\$)[^$]+(?<!\$)\$(?!\$))'
         math_blocks = []
         def replace_match(match):
             idx = len(math_blocks)
