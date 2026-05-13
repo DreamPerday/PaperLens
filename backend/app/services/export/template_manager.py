@@ -49,8 +49,6 @@ class TemplateManager:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
     <style>
         * {
             -webkit-print-color-adjust: exact !important;
@@ -461,41 +459,6 @@ class TemplateManager:
     </div>
     {% endif %}
     
-    {% if include_original %}
-    <div class="content-section avoid-break">
-        <h1 class="section-title">原文 / Original</h1>
-        {{ original_content|safe }}
-    </div>
-    {% endif %}
-    
-    {% if include_translation %}
-    {% if include_original %}
-    <hr class="page-break" style="border: none; page-break-after: always;">
-    {% endif %}
-    <div class="content-section avoid-break">
-        <h1 class="section-title">译文 / Translation</h1>
-        {{ translated_content|safe }}
-    </div>
-    {% endif %}
-    
-    <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            if (typeof renderMathInElement !== 'undefined') {
-                renderMathInElement(document.body, {
-                    delimiters: [
-                        {left: "$$", right: "$$", display: true},
-                        {left: "\\[", right: "\\]", display: true},
-                        {left: "$", right: "$", display: false},
-                        {left: "\\(", right: "\\)", display: false}
-                    ],
-                    throwOnError: false,
-                    errorColor: '#cc0000',
-                    trust: true,
-                    strict: false
-                });
-            }
-        });
-    </script>
 </body>
 </html>"""
         
@@ -506,8 +469,6 @@ class TemplateManager:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
     <style>
         * {
             -webkit-print-color-adjust: exact !important;
@@ -841,24 +802,6 @@ class TemplateManager:
     </div>
     {% endif %}
     
-    <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            if (typeof renderMathInElement !== 'undefined') {
-                renderMathInElement(document.body, {
-                    delimiters: [
-                        {left: "$$", right: "$$", display: true},
-                        {left: "\\[", right: "\\]", display: true},
-                        {left: "$", right: "$", display: false},
-                        {left: "\\(", right: "\\)", display: false}
-                    ],
-                    throwOnError: false,
-                    errorColor: '#cc0000',
-                    trust: true,
-                    strict: false
-                });
-            }
-        });
-    </script>
 </body>
 </html>"""
         
@@ -869,8 +812,6 @@ class TemplateManager:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
     <style>
         @page {
             size: {{ page_size }};
@@ -881,12 +822,12 @@ class TemplateManager:
                 color: #888;
             }
         }
-        
+
         * {
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
         }
-        
+
         body {
             font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
             line-height: 1.8;
@@ -984,20 +925,6 @@ class TemplateManager:
     </div>
     {% endif %}
     
-    <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            if (typeof renderMathInElement !== 'undefined') {
-                renderMathInElement(document.body, {
-                    delimiters: [
-                        {left: "$$", right: "$$", display: true},
-                        {left: "\\[", right: "\\]", display: true},
-                        {left: "$", right: "$", display: false},
-                        {left: "\\(", right: "\\)", display: false}
-                    ]
-                });
-            }
-        });
-    </script>
 </body>
 </html>"""
         
@@ -1008,8 +935,6 @@ class TemplateManager:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
     <style>
         @page {
             size: {{ page_size }};
@@ -1020,7 +945,7 @@ class TemplateManager:
                 color: #666;
             }
         }
-        
+
         body {
             font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
             line-height: 1.6;
@@ -1061,24 +986,6 @@ class TemplateManager:
     </div>
     {% endif %}
     
-    <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            if (typeof renderMathInElement !== 'undefined') {
-                renderMathInElement(document.body, {
-                    delimiters: [
-                        {left: "$$", right: "$$", display: true},
-                        {left: "\\[", right: "\\]", display: true},
-                        {left: "$", right: "$", display: false},
-                        {left: "\\(", right: "\\)", display: false}
-                    ],
-                    throwOnError: false,
-                    errorColor: '#cc0000',
-                    trust: true,
-                    strict: false
-                });
-            }
-        });
-    </script>
 </body>
 </html>"""
         

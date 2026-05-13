@@ -1,12 +1,16 @@
 from __future__ import annotations
-from typing import List, Optional, Set
+from typing import List, Optional
 from app.models.block_schema import (
     Block, BlockType, InlineNode, InlineType,
     Document, TableAlign
 )
+from .katex_service import render_math_to_html
 
 
 class HTMLRenderer:
+
+    def __init__(self, ssr_math: bool = True):
+        self.ssr_math = ssr_math
 
     def render(self, document: Document) -> str:
         parts: List[str] = []
@@ -35,7 +39,23 @@ class HTMLRenderer:
             return f'<pre><code{lang_cls}>{escaped}</code></pre>'
 
         elif block.type == BlockType.math_block:
-            return f'<div class="math-block">\\[{block.content}\\]</div>'
+            if self.ssr_math:
+                raw = block.content
+                env_match = __import__('re').match(r'^\\begin\{([^}]*)\}', raw)
+                if env_match:
+                    env_end = raw.rfind(f'\\end{{{env_match.group(1)}}}')
+                    if env_end > -1:
+                        raw = raw[env_match.end():env_end].strip()
+                    else:
+                        raw = raw[env_match.end():].strip()
+                else:
+                    raw = raw.replace('$$', '').replace('\\[', '').replace('\\]', '').strip()
+                katex_html = render_math_to_html(raw, display_mode=True)
+                env_label = block.info or ""
+                label_html = f'<div class="math-env-label">{self._escape_html(env_label)}</div>' if env_label else ''
+                return f'<div class="math-block math-display">{label_html}{katex_html}</div>'
+            else:
+                return f'<div class="math-block">\\[{block.content}\\]</div>'
 
         elif block.type == BlockType.bullet_list:
             items: List[str] = []
@@ -69,6 +89,15 @@ class HTMLRenderer:
         elif block.type == BlockType.html_block:
             return block.content
 
+        elif block.type == BlockType.image:
+            src = self._escape_html_attr(block.meta.get("url", ""))
+            alt = self._escape_html(block.content or "")
+            caption = block.content or ""
+            figure = f'<figure class="figure"><img src="{src}" alt="{alt}" /></figure>'
+            if caption:
+                figure = f'<figure class="figure"><img src="{src}" alt="{alt}" /><figcaption class="figure-caption">{caption}</figcaption></figure>'
+            return figure
+
         return None
 
     def _render_table(self, block: Block) -> str:
@@ -76,7 +105,6 @@ class HTMLRenderer:
             return ''
 
         aligns = block.aligns or []
-
         rows_html: List[str] = []
 
         header_cells = block.rows[0]
@@ -131,7 +159,11 @@ class HTMLRenderer:
             return f'<code>{self._escape_html(node.content)}</code>'
 
         elif node.type == InlineType.math:
-            return f'<span class="math-inline">\\({node.content}\\)</span>'
+            if self.ssr_math:
+                katex_html = render_math_to_html(node.content, display_mode=False)
+                return f'<span class="math-inline">{katex_html}</span>'
+            else:
+                return f'<span class="math-inline">\\({node.content}\\)</span>'
 
         elif node.type == InlineType.link:
             inner = self._render_inlines(node.children) if node.children else self._escape_html(node.content)
@@ -165,6 +197,6 @@ class HTMLRenderer:
         )
 
 
-def render_to_html(document: Document) -> str:
-    renderer = HTMLRenderer()
+def render_to_html(document: Document, ssr_math: bool = True) -> str:
+    renderer = HTMLRenderer(ssr_math=ssr_math)
     return renderer.render(document)

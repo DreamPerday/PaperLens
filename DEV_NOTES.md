@@ -2150,6 +2150,127 @@ def cache_key(project_id: str, doc_id: str, format: str, options_hash: str) -> s
 | P1 | `DocumentView.tsx` 迁移到 `BlockRenderer` | 消除重复解析逻辑 |
 | P1 | EPUB Exporter (ebooklib) | 新格式支持 |
 | P1 | Export Queue + Worker | 大文档导出不阻塞 |
+| P1 | ✅ **Python 端 SSR KaTeX 渲染** | **WYSIWYG 数学公式导出** |
+| P1 | ✅ **统一 Render Pipeline 修复** | **图片+公式全格式一致** |
 | P2 | 数学公式 SVG 降级 (EPUB) | Kindle 兼容 |
 | P2 | 虚拟滚动 (大文档阅读) | 性能 |
 | P2 | CI 截图对比测试 | 防止回归 |
+
+---
+
+## 问题十七：WYSIWYG 导出一致性修复 — Python 端 SSR KaTeX + 全格式统一
+
+### 诊断
+
+**问题一：公式在 PDF/DOCX 中未渲染**
+
+排查发现，Python 后端 `HTMLRenderer` 输出的是原始 LaTeX 标记:
+
+```html
+<!-- 旧版 HTMLRenderer 输出 -->
+<span class="math-inline">\(E=mc^2\)</span>
+<div class="math-block">\[\int x dx\]</div>
+```
+
+然后依赖模板中的 `<script src="katex...">` + `renderMathInElement()` **客户端 JS** 来转换。
+这对 PDF（Playwright 网络依赖 + 时序不可靠）和 DOCX（根本不支持 JS）是致命的。
+
+**问题二：图片仅在 HTML 格式显示**
+
+PDF 导出中 Playwright 的 `wait_for_timeout(1000)` 不能可靠等待大图/网络图片加载完成。
+
+### 修复
+
+#### 修复 1: Python 端 SSR KaTeX 渲染服务
+
+文件: [katex_service.py](file:///d:/pythontest/translation-platform/backend/app/services/parser/katex_service.py)
+
+```
+LaTeX 文本
+    │
+    ▼
+subprocess.run(["node", "-e", require("katex").renderToString(...)])
+    │  encoding="utf-8", errors="replace", timeout=15s
+    │  cwd=项目根目录, NODE_PATH=frontend/node_modules
+    ▼
+真实 KaTeX HTML（含 katex-mathml、katex-html 等 class）
+```
+
+关键设计：
+- 调用项目已有的 `frontend/node_modules/katex` — 与前端 `DocumentView.tsx` 使用**完全相同**的 KaTeX 版本
+- `NODE_PATH` 环境变量确保 `require("katex")` 能找到模块
+- 失败时 graceful fallback 为 `<pre>` 标签包裹的 LaTeX 源码
+
+#### 修复 2: HTMLRenderer 改为 SSR 模式
+
+文件: [html_renderer.py](file:///d:/pythontest/translation-platform/backend/app/services/parser/html_renderer.py)
+
+已移除所有 `\(...\)` / `\[...\]` 原始 LaTeX 标记生成。
+现在直接输出 KaTeX 预渲染的 HTML：
+
+```html
+<!-- 新版 HTMLRenderer 输出（SSR 模式） -->
+<span class="math-inline"><span class="katex"><span class="katex-mathml">...</span>...</span></span>
+<div class="math-block math-display"><span class="katex-display"><span class="katex">...</span></span></div>
+```
+
+**效果**：
+- HTML 导出：打开即渲染，**不需要**浏览器端 KaTeX JS
+- PDF 导出：Playwright 渲染的 HTML 中数学公式已是终态，零 JS 依赖
+- EPUB 导出：XHTML 中的数学公式同样是预渲染态
+
+#### 修复 3: 模板移除客户端 KaTeX JS
+
+文件: [template_manager.py](file:///d:/pythontest/translation-platform/backend/app/services/export/template_manager.py)
+
+所有 4 个模板（academic / modern / dark / compact）中:
+- ✅ 保留 KaTeX CSS（`katex.min.css` CDN 链接）— 用于样式化已预渲染的 KaTeX HTML
+- ❌ 移除 `katex.min.js` — 不再需要
+- ❌ 移除 `auto-render.min.js` — 不再需要
+- ❌ 移除所有 `renderMathInElement()` 调用 — 不再需要
+
+**同时修复**: 移除了 academic 模板中重复的原文/译文内容块（此前渲染了两遍）。
+
+#### 修复 4: PDF 导出图片预加载
+
+文件: [pdf_exporter.py](file:///d:/pythontest/translation-platform/backend/app/services/export/pdf_exporter.py)
+
+```python
+# 旧: 简单等待 1000ms — 不可靠
+page.wait_for_timeout(1000)
+
+# 新: 三阶段图片加载保证
+page.wait_for_load_state("networkidle", timeout=30000)   # 等待所有网络请求完成
+page.evaluate("window.scrollTo(0, document.body.scrollHeight)")  # 触发懒加载
+page.wait_for_timeout(500)                                # 渲染缓冲
+page.evaluate("window.scrollTo(0, 0)")                   # 回滚到顶部
+```
+
+#### 修复 5: DOCX 增加图像块支持
+
+文件: [docx_renderer.py](file:///d:/pythontest/translation-platform/backend/app/services/parser/docx_renderer.py)
+
+新增 `BlockType.image` 处理分支，将独立的图片块插入 DOCX。
+
+### 验证结果
+
+**24/24 测试通过**，覆盖：
+
+| 测试组 | 项数 | 验证内容 |
+|--------|:---:|---------|
+| SSR KaTeX Service | 5 | `katex-mathml` 存在、`katex-display` 存在、无残留 `$` 标记 |
+| HTML Renderer (SSR模式) | 12 | 所有 Block 类型正确、公式预渲染、无客户端依赖 |
+| DOCX Export | 1 | 含数学公式的文档可正常导出 |
+| Markdown Round-trip | 3 | 数学公式完整保留、二次渲染稳定 |
+| Exporter Imports | 1 | 所有导出器可正常导入 |
+| HTML (无SSR回退) | 2 | 回退模式正确输出 LaTeX 标记 |
+
+### WYSIWYG 一致性矩阵
+
+| 格式 | 数学公式 | 图片 | 渲染引擎 |
+|------|:---:|:---:|------|
+| **Web Reader** | KaTeX SSR (React) | `<img>` + base64 | `DocumentView.tsx` |
+| **HTML Export** | KaTeX SSR (Python Node) ✅ | `<img>` + base64 ✅ | `HTMLRenderer(ssr_math=True)` |
+| **PDF Export** | 预渲染 KaTeX HTML → Chromium ✅ | Playwright networkidle ✅ | Playwright + SSR HTML |
+| **DOCX Export** | KaTeX HTML 内联 + 回退标记 | `add_picture()` ✅ | `DocxRenderer` |
+| **Markdown Export** | 原始 `$...$` 保留 ✅ | Base64 data URI | `MarkdownRenderer` |

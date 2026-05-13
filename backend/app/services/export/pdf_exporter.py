@@ -23,7 +23,6 @@ page_size = data["page_size"]
 output_path = data["output_path"]
 html_path = data_path + ".html"
 
-# Save HTML to a file for goto() instead of set_content()
 with open(html_path, "w", encoding="utf-8") as f:
     f.write(html_content)
 
@@ -42,11 +41,22 @@ try:
         context = browser.new_context(
             viewport={"width": 1280, "height": 1024},
             locale="zh-CN",
-            accept_downloads=True
         )
         page = context.new_page()
+
         page.goto("file:///" + html_path.replace("\\", "/"), wait_until="load", timeout=120000)
-        page.wait_for_timeout(1000)
+
+        # Wait for images to load
+        try:
+            page.wait_for_load_state("networkidle", timeout=30000)
+        except:
+            page.wait_for_timeout(5000)
+
+        # Scroll the full page to trigger lazy-loaded images
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.wait_for_timeout(500)
+        page.evaluate("window.scrollTo(0, 0)")
+
         page.pdf(
             path=output_path,
             format=page_size,

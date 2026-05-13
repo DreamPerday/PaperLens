@@ -120,6 +120,14 @@ class DocxRenderer:
         elif block.type == BlockType.html_block:
             pass
 
+        elif block.type == BlockType.image:
+            src = block.meta.get("url", "")
+            if src:
+                self._add_image_to_docx_from_src(doc, str(src), block.content)
+
+    def _add_image_to_docx_from_src(self, doc: DocxDocument, src: str, caption: str = ""):
+        self._add_image_to_docx(doc, src)
+
     def _render_table_to_docx(self, doc: DocxDocument, block: Block):
         if not block.rows or not block.rows[0]:
             return
