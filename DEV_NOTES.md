@@ -730,6 +730,8 @@ FastAPI 路由匹配是按定义顺序进行的。`@router.get("/{project_id}")`
 
 ---
 
+---
+   
 ## 常见 Bug 检查清单
 
 在提交代码前，检查以下常见问题：
@@ -740,3 +742,119 @@ FastAPI 路由匹配是按定义顺序进行的。`@router.get("/{project_id}")`
 4. **Token 统计**：确保显示的是正确的统计字段
 5. **存储格式**：确保存储的是字符串而非对象
 6. **环境变量**：避免硬编码端口和 URL
+
+---
+   
+## 问题十四：导出格式缺陷全面修复（`\begin{}...\end{}` 公式、HTML 非法嵌套、图片位置等）
+
+### 背景
+
+通过检查四个导出产物（MD/HTML/DOCX/PDF）和全部导出相关源代码，发现 9 个跨导出器的格式解析和图片缓存问题。
+
+### 问题清单与修复
+
+#### 修复 1：`\begin{}...\end{}` 公式环境不受保护（🔴 严重）
+
+**问题**：所有导出器的公式保护正则只匹配 `$$`/`$`/`\[`/`\(` 定界符，遗漏了 `\begin{aligned}`、`\begin{array}`、`\begin{cases}` 等 LaTeX 环境。这些公式在 Markdown→HTML 转换时被破坏。
+
+**修复**：在 `markdown_exporter.py`、`html_exporter.py`、`docx_exporter.py`、`translator.py` 的正则最前面添加 `\\begin\{[^}]*\}[\s\S]*?\\end\{[^}]*\}`，确保 LaTeX 环境优先匹配。
+
+涉及的修复文件：
+- `markdown_exporter.py:_protect_math` — 公式保护正则
+- `html_exporter.py:_protect_math` — 公式保护正则
+- `html_exporter.py:_restore_math_html` — 增加 `\begin` 还原分支
+- `docx_exporter.py:_add_formatted_runs` — 内联正则
+- `docx_exporter.py:_parse_content` — 行解析增加 `\begin` 处理
+- `translator.py:FORMULA_BLOCK_RE` — 翻译前公式保护
+
+#### 修复 2：HTML `<p><div>` 非法嵌套（🔴 严重）
+
+**问题**：Python-Markdown 库将数学占位符 `@@MATH_N@@` 转换为 HTML 时包裹在 `<p>` 中，公式还原后变成 `<p><div class="math-block">...</div></p>`，违反 HTML 规范（块级元素不可嵌套在行内元素内）。
+
+**修复**：在 `html_exporter.py:_markdown_to_html` 末尾增加后处理：
+```python
+html = re.sub(r'<p>\s*<div class="math-block">', r'<div class="math-block">', html)
+html = re.sub(r'</div>\s*</p>', r'</div>', html)
+```
+
+#### 修复 3：Modern/Compact 主题缺少 KaTeX（🔴 严重）
+
+**问题**：`template_manager.py` 中 Academic 和 Dark 模板有 KaTeX 脚本引用，但 Modern 和 Compact 模板缺少。使用这两个主题导出的 HTML 数学公式无法渲染。
+
+**修复**：在 Modern 和 Compact 模板的 `<head>` 中添加 KaTeX CSS/JS CDN 引用，并在 `</body>` 前添加 `renderMathInElement` 初始化脚本。
+
+#### 修复 4：图片位置均匀分布算法不准确（🔴 严重）
+
+**问题**：`_enrich_translation_with_images` 按 `step = total_paras / total_images` 均匀分布图片到译文段落，完全忽略图片在原文章节中的实际位置。
+
+**修复**：改为上下文相关算法 — 先计算每张图片在原文章节中的位置比例，再按相同比例映射到译文段落：
+```python
+# 计算图片在原文中的段落位置
+o_ratio = img_para_idx / max(1, len(o_paras) - 1)
+# 映射到译文对应位置
+t_idx = int(o_ratio * (len(t_paras) - 1))
+```
+
+#### 修复 5：AssetManager 缓存清理不一致（🟡 中等）
+
+**问题**：HTML 导出器在原文和译文图片嵌入之间调用 `clear_cache()`，这会同时清空 base64 缓存和已处理图片集合，导致翻译文本的图片需要重新编码。
+
+**修复**：
+- `collect_images` 参数 `_doc_id` 改为 `doc_id`（之前参数名加下划线表示未使用）
+- 新增 `clear_processed_only()` 方法，只清除已处理集合，保留 base64 缓存
+- HTML 导出器在原文/译文之间改用 `clear_processed_only()` 而非 `clear_cache()`
+
+#### 修复 6：TemplateManager 模板文件重复写入
+
+**问题**：每次 `TemplateManager.__init__()` 都会无条件重写所有模板文件，造成不必要的磁盘 I/O。
+
+**修复**：引入 MD5 哈希版本检查机制：
+- `_load_hashes()` / `_save_hashes()` — 从 `.template_hashes` 文件读写哈希
+- `_compute_hash()` — 计算模板内容的 MD5
+- 只在哈希变化或文件不存在时才写入
+- 哈希变化时重新创建 Jinja2 Environment 以加载新模板
+
+#### 修复 7：TOC 锚点生成错误（🟡 中等）
+
+**问题**：`_generate_toc` 中使用 `str.replace("[^a-z0-9-]", "")` 清理锚点文本，但 `str.replace` 按字面字符串匹配而非正则，导致 `[^a-z0-9-]` 不被识别为字符类。
+
+**修复**：
+```python
+# ❌ 修复前
+anchor = text.lower().replace(" ", "-").replace("[^a-z0-9-]", "")
+
+# ✅ 修复后
+anchor = re.sub(r'[^a-z0-9-]', '', text.lower().replace(" ", "-"))
+```
+
+#### 修复 8：PDF 生成时 KaTeX 渲染等待不足（🟡 中等）
+
+**问题**：`_pdf_generator.py` 中 `page.wait_for_timeout(1000)` 固定等待 1 秒，对于包含 200+ 图片和大量公式的大型文档，CDN 加载的 KaTeX 脚本可能在 1 秒内未完成渲染。
+
+**修复**：用 `page.wait_for_function` 替代固定超时：
+```javascript
+// 检查是否有 KaTeX 脚本 + 是否有数学块 + KaTeX 是否已渲染
+const hasKatex = !!document.querySelector('script[src*="katex.min.js"]');
+if (!hasKatex) return true;  // 无 KaTeX → 立即继续
+const hasMath = !!document.querySelector('.math-block, .math-inline');
+if (!hasMath) return true;  // 无数学公式 → 立即继续
+return !!document.querySelector('.katex, .katex-display');  // 等 KaTeX 渲染完成
+```
+超时设为 20 秒，异常时静默跳过。
+
+#### 修复 9：Markdown 导出 HTML 标签清理过于激进（🟡 中等）
+
+**问题**：`_strip_html_tags` 无条件剥离所有非 `br`/`hr` 的 HTML 标签，包括 `<code>`、`<pre>`、`<strong>`、`<em>` 等语义标签。
+
+**修复**：在通用标签剥离之前，先转换语义标签为 Markdown 等价形式：
+- `<pre>...</pre>` → ```` ```...``` ````
+- `<code>...</code>` → `` `...` ``
+- `<strong>/<b>...</b>` → `**...**`
+- `<em>/<i>...</i>` → `*...*`
+
+### 其他 AI 可参考的经验
+
+- **公式保护必须在最前面**：当正则中有多个 `|` 分支时，`\begin{...}...\end{...}` 必须放在 `\[...\]` 之前，否则 `\[` 会提前匹配 `\begin` 中的反斜杠。
+- **Markdown→HTML 转换后的 HTML 验证**：Python-Markdown 产生的 HTML 不是完全规范的，需要在关键位置（如公式块的 `<p><div>` 嵌套）做后处理。
+- **模板版本管理**：当模板内嵌在 Python 源码中时，必须有机制确保磁盘缓存与代码同步。MD5 哈希比较是一个轻量级的方案。
+- **Playwright PDF 的数学渲染**：`wait_for_timeout` 不可靠。用 `wait_for_function` 检测 DOM 中的 `.katex` 元素是确定 KaTeX 渲染完成的唯一可靠方法。

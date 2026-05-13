@@ -356,11 +356,11 @@ export function DualPaneReader() {
         )}
 
         {/* Content Panels */}
-        <div className="flex-1 flex min-h-0">
+        <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 min-h-0">
 
           {/* Left/Original Panel */}
           <div className={cn(
-            "flex-1 min-w-0 flex flex-col min-h-0",
+            "min-w-0 flex flex-col min-h-0",
             !hasTranslation ? "flex" : mobileTab === "original" ? "flex" : "hidden lg:flex"
           )}>
             <div
@@ -401,7 +401,7 @@ export function DualPaneReader() {
 
           {/* Right/Translation Panel */}
           <div className={cn(
-            "flex-1 min-w-0 flex flex-col min-h-0",
+            "min-w-0 flex flex-col min-h-0",
             !hasTranslation ? "hidden lg:flex" : mobileTab === "translation" ? "flex" : "hidden lg:flex"
           )}>
             <div

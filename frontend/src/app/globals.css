@@ -97,6 +97,8 @@
 
   .reader-panel {
     @apply bg-[rgb(var(--reader-bg))] border border-[rgb(var(--reader-border))]/50 rounded-lg shadow-soft;
+    overflow-wrap: anywhere;
+    min-width: 0;
   }
 
   .nav-item {
@@ -181,6 +183,8 @@
 
   .doc-content p {
     @apply text-base leading-relaxed text-surface-600 dark:text-surface-400 my-2;
+    overflow-wrap: break-word;
+    word-break: break-word;
   }
 
   .doc-content table {
@@ -188,6 +192,7 @@
     border-collapse: collapse !important;
     margin-left: auto !important;
     margin-right: auto !important;
+    table-layout: auto;
   }
 
   .doc-content thead {
