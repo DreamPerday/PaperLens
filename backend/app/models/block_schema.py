@@ -76,4 +76,4 @@ class Document(BaseModel):
     source_text: str = ""
 
 
-DOCUMENT_AST_VERSION = "1.0.0"
+DOCUMENT_AST_VERSION = "1.1.0"

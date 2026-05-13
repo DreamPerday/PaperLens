@@ -349,7 +349,7 @@ export function ExportModal({ open, onClose, projectId, docId }: ExportModalProp
         )}
 
         <div className="flex items-center justify-end gap-2 pt-2">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
           <Button

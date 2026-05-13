@@ -1014,3 +1014,977 @@ markdown = render_document(doc)
 from app.services.parser import DocxRenderer
 docx_bytes = DocxRenderer().render(doc, title="Document")
 ```
+
+---
+
+## 问题十六：WYSIWYG 文档导出系统 — 工业级 AST + Render Pipeline 架构设计
+
+### 0. 总体架构图
+
+```
+                     ┌─────────────┐
+                     │  PDF Upload │
+                     │  / OCR      │
+                     └──────┬──────┘
+                            │
+                     ┌──────▼──────┐
+                     │ PaddleOCR    │
+                     │ + Layout     │
+                     │   Parser     │
+                     └──────┬──────┘
+                            │ OCR Regions + Text
+                     ┌──────▼──────┐
+                     │ MarkdownParser│ ← Markdown/LaTeX 混合输入
+                     │ (Python/TS   │
+                     │  对齐实现)    │
+                     └──────┬──────┘
+                            │
+                  ┌─────────▼─────────┐
+                  │  Document AST     │
+                  │  Block Schema     │  ← 唯一真相源
+                  │  (Python ↔ TS)    │
+                  └───┬──────┬────┬──┘
+                      │      │    │
+        ┌─────────────┤      │    └──────────────────┐
+        │             │      │                        │
+   ┌────▼────┐  ┌─────▼──┐ ┌▼──────────┐   ┌────────▼──────┐
+   │ Web      │  │ HTML   │ │ Playwright │   │  Python        │
+   │ Reader   │  │ Export │ │ PDF        │   │  DOCX / EPUB   │
+   │ (React)  │  │        │ │ Generator  │   │  Export         │
+   └────┬─────┘  └────┬───┘ └─────┬──────┘   └───────┬────────┘
+        │             │            │                   │
+        │    ┌────────┴────────────┴───────────────────┘
+        │    │   Shared Renderer + Print CSS + Theme Tokens
+        │    │   (一份代码，四种输出)
+        └────┘
+```
+
+### 1. 统一文档 AST 架构
+
+#### 1.1 TypeScript AST 类型定义
+
+文件：[block-schema.ts](file:///d:/pythontest/translation-platform/frontend/src/ast/block-schema.ts)
+
+**与 Python 端完全对齐的设计原则**：
+- 类型名称、字段名、字段顺序与 [block_schema.py](file:///d:/pythontest/translation-platform/backend/app/models/block_schema.py) 完全一致
+- TS 端扩展了 export-specific 类型（`CitationRef`、`OCRRegion`、`FigureMeta`、`TranslationPair` 等）
+- 版本号统一管理：`DOCUMENT_AST_VERSION = "1.1.0"`
+
+**完整 Block 类型（24 种）**：
+
+| BlockType | 用途 | Web Reader | PDF | EPUB | DOCX |
+|-----------|------|:---:|:---:|:---:|:---:|
+| `heading` | 标题 H1-H6 | ✅ | ✅ | ✅ | ✅ |
+| `paragraph` | 文本段落 | ✅ | ✅ | ✅ | ✅ |
+| `code_block` | 代码块 | ✅ | ✅ | ✅ | ✅ |
+| `math_block` | 显示公式 | ✅ | ✅ | ✅ | ✅ |
+| `image` | 独立图片 | ✅ | ✅ | ✅ | ✅ |
+| `bullet_list` | 无序列表 | ✅ | ✅ | ✅ | ✅ |
+| `ordered_list` | 有序列表 | ✅ | ✅ | ✅ | ✅ |
+| `list_item` | 列表项 | ✅ | ✅ | ✅ | ✅ |
+| `blockquote` | 块引用 | ✅ | ✅ | ✅ | ✅ |
+| `table` | GFM 表格 | ✅ | ✅ | ✅ | ✅ |
+| `thematic_break` | 水平线 | ✅ | ✅ | ✅ | ✅ |
+| `html_block` | 原始 HTML | ✅ | ✅ | ✅ | - |
+| `footnote` | 脚注标记 | ✅ | ✅ | ✅ | ✅ |
+| `footnote_ref` | 脚注内容 | ✅ | ✅ | ✅ | ✅ |
+| `citation` | 引文标记 `[1]` | ✅ | ✅ | ✅ | ✅ |
+| `citation_list` | 参考文献列表 | ✅ | ✅ | ✅ | ✅ |
+| `toc` | 目录 | ✅ | ✅ | ✅ | ✅ |
+| `figure` | 带标题图表 | ✅ | ✅ | ✅ | ✅ |
+| `ocr_region` | OCR 区域 | ✅ | ✅ | ✅ | ✅ |
+| `column_layout` | 双栏/单栏 | ✅ | ✅ | ✅ | - |
+| `page_break` | 强制分页 | - | ✅ | ✅ | ✅ |
+
+**Inline 类型（10 种）**：
+
+| InlineType | 描述 | 嵌套支持 | 示例 |
+|-----------|------|:---:|------|
+| `text` | 纯文本 | - | `Hello` |
+| `bold` | 加粗 | ✅ | `**bold *italic***` |
+| `italic` | 斜体 | ✅ | `*italic*` |
+| `underline` | 下划线 | - | `<u>` |
+| `strikethrough` | 删除线 | - | `~~text~~` |
+| `code` | 行内代码 | - | `` `code` `` |
+| `math` | 行内公式 | - | `$E=mc^2$` |
+| `link` | 超链接 | ✅ | `[text](url)` |
+| `image` | 行内图片 | - | `![alt](src)` |
+| `soft_break` | 软换行 | - | `<br>` |
+
+#### 1.2 扩展 Schema
+
+**OCR Block Schema**（`OCRRegion`）：
+```typescript
+interface OCRBBox {
+  x: number; y: number; width: number; height: number; page: number;
+}
+interface OCRRegion {
+  bbox: OCRBBox;
+  type: "text" | "title" | "figure" | "table" | "formula" | "footer" | "header";
+  confidence: number;
+  text: string;
+}
+```
+
+**Citation Schema**（`CitationRef`）：
+```typescript
+interface CitationRef {
+  id: string; index: number;
+  authors: string; title: string; venue: string;
+  year: number; doi?: string; url?: string;
+}
+```
+
+**Figure Schema**（`FigureMeta`）：
+```typescript
+interface FigureMeta {
+  id: string; caption: string; label: string;
+  width: number; height: number; src: string;
+  srcType: "base64" | "url" | "file"; ocrBbox?: OCRBBox;
+}
+```
+
+**Translation Schema**（`TranslationPair`）：
+```typescript
+interface TranslationPair {
+  source: InlineNode[];
+  target: InlineNode[];
+  confidence: number;
+}
+```
+每个 `Block` 可选携带 `translation?: TranslationPair`，从而实现段落级双语对照，而非整篇文档的简单拼接。
+
+#### 1.3 AI-Friendly 设计
+
+- **段落粒度 TranslationPair**：每个 Block 携带 `source → target` 对，支持 RAG 检索
+- **Inline 级别对齐**：`InlineNode[]` 的对齐使翻译模型可以逐词/逐公式匹配
+- **Confidence 字段**：翻译置信度可直接用于高亮低置信区域
+- **Metadata 完整**：文档元信息（DOI、arxivId、关键词）随 AST 携带
+
+---
+
+### 2. Unified Renderer 架构
+
+#### 2.1 核心原则
+
+> **一份 AST，一套 Renderer，四种输出路径**
+
+```
+                   Document AST
+                        │
+            ┌───────────┼───────────┐
+            │           │           │
+      [BlockRenderer]   │     [Python Renderer]
+      (React)           │     (Server-side)
+            │           │           │
+   ┌────────┴───┐       │    ┌──────┴──────┐
+   │  Reader    │  Print │    │ DOCX Export │
+   │  screen    │  CSS   │    │ EPUB Export │
+   └────────────┘        │    └─────────────┘
+                         │
+                  ┌──────┴──────┐
+                  │ PDF Export  │
+                  │ (Playwright │
+                  │  渲染 Print  │
+                  │  CSS HTML)   │
+                  └─────────────┘
+```
+
+#### 2.2 Block Renderer（共享组件）
+
+文件：[block-renderer.tsx](file:///d:/pythontest/translation-platform/frontend/src/ast/block-renderer.tsx)
+
+```tsx
+<DocumentRenderer blocks={ast.blocks} mode="reader" />   // Web Reading
+<DocumentRenderer blocks={ast.blocks} mode="print" />     // Print / PDF
+<DocumentRenderer blocks={ast.blocks} mode="export" />    // HTML export
+```
+
+**Key design decisions**：
+
+1. **同一个 `BlockRenderer` 组件**渲染所有 Block 类型，mode prop 控制细节
+2. **Inline 渲染器独立为纯函数** `renderInlines()`，不依赖 DOM
+3. **KaTeX 在组件层使用 `React.useMemo` + `dangerouslySetInnerHTML`** — 与现有 `DocumentView.tsx` 一致，但改为 Block 级别而非全文正则
+4. **图片使用 `loading="lazy"`** — Reader 模式懒加载，Print 模式下浏览器自动加载全部
+
+#### 2.3 Theme System
+
+文件：[print.css](file:///d:/pythontest/translation-platform/frontend/src/ast/print.css)
+
+**CSS Custom Properties 令牌系统**：
+
+```css
+:root {
+  --font-body: "Inter", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+  --font-math: "KaTeX_Main", "Times New Roman", serif;
+  --color-text: #1a1a2e;
+  --color-heading: #0f0f1a;
+  --color-link: #2e6eff;
+  --color-code-bg: #f1f3f6;
+  --color-quote-bg: #f8f9fb;
+  /* ... 50+ tokens */
+}
+
+/* Dark mode override */
+:root.dark {
+  --color-text: #e2e4ea;
+  --color-heading: #f0f2f8;
+  /* ... */
+}
+```
+
+**四种模式同一套令牌**：
+- `@media screen` — 正常 Web 阅读体验
+- `@media print` — PDF / 打印输出
+- `.dark` — 深色模式 Web Reader
+- `@media (max-width: 768px)` — 移动端布局
+
+#### 2.4 SSR / Hydration
+
+```
+Server (Next.js SSR)            Client (Hydration)
+     │                               │
+     │ parse(markdown) → AST         │
+     │                               │
+     │ <DocumentRenderer>            │ hydrate →
+     │   KaTeX SSR                   │   KaTeX client-side
+     │   (katex.renderToString)      │   (React.useMemo)
+     │ </DocumentRenderer>           │
+```
+
+**KaTeX SSR 策略**：
+- **Server side**：`katex.renderToString()` 生成 HTML 字符串（零 JS 首次渲染）
+- **Client side hydration**：`React.useMemo` 缓存，公式不变不重算
+- **Print mode**：浏览器直接渲染已存在的 `.katex-html` DOM，无需额外 JS
+
+---
+
+### 3. PDF 导出架构
+
+#### 3.1 为什么 HTML → Chromium PDF 是最佳方案
+
+| 方案 | 数学公式 | 中文 | 图片 | 开发成本 | 结果 |
+|------|:---:|:---:|:---:|:---:|------|
+| WeasyPrint | ❌ 不支持 JS/KaTeX | ✅ | ✅ | 低 | 公式丢失 |
+| LaTeX→PDF | ✅ | 复杂 | ⚠️ | 极高 | 好但难自动化 |
+| Canvas 截图 | ❌ 文本无法选择 | ✅ | ✅ | 中 | 模糊位图 |
+| **Playwright Chromium PDF** | ✅ KaTeX SSR | ✅ | ✅ | 低 | 矢量文本+公式 |
+| Puppeteer Chromium PDF | ✅ | ✅ | ✅ | 低 | 同 Playwright |
+
+**选择 Playwright 的核心理由**：
+1. **Chromium PDF 引擎**内置分页、字体嵌入、CSS print 渲染 — 印刷级排版
+2. **KaTeX SSR 已预渲染为 HTML**，Chromium 直接渲染，无需 JS 执行（`wait_for_function` 检查 `.katex` 元素即可）
+3. 无额外依赖：已在项目中使用，复用现有 `_pdf_generator.py`
+4. 跨平台一致性：Windows/Linux/Docker 同一套代码
+
+#### 3.2 完整 PDF Pipeline
+
+```
+AST (Python)
+  │
+  ▼
+HTMLRenderer (server-side, Python)
+  │  render_to_html(ast_doc)
+  │  生成 standalone HTML with:
+  │    - 内联 print.css
+  │    - 内联 KaTeX CSS
+  │    - 内联字体 @font-face（Inter, Noto Sans SC）
+  │    - Base64 图片
+  │    - <meta charset="utf-8">
+  │    - <title> 元信息
+  ▼
+standalone HTML file
+  │
+  ▼
+Playwright Chromium
+  │  page.goto("file://...")
+  │  wait_for_function("!!document.querySelector('.katex')")
+  │  wait_for_timeout(500)       ← 等待 KaTeX 渲染完成
+  │  page.pdf({
+  │    format: "A4",
+  │    print_background: true,
+  │    display_header_footer: true,
+  │    header_template: "...",
+  │    footer_template: "Page <span class='pageNumber'></span>",
+  │    margin: { top: "2.5cm", bottom: "2cm", left: "2.5cm", right: "2cm" }
+  │  })
+  ▼
+PDF (bytes)
+```
+
+#### 3.3 Print CSS 关键规则
+
+```css
+@media print {
+  @page {
+    size: A4;
+    margin-top: 2.5cm;
+    @top-center { content: string(doctitle); }
+    @bottom-center { content: counter(page); }
+  }
+
+  /* 避免公式/图表/代码被截断 */
+  .math-display, .figure-block, .code-block, table {
+    page-break-inside: avoid;
+  }
+
+  /* 标题后不单独分页 */
+  h1, h2, h3 { page-break-after: avoid; }
+
+  /* 长公式允许横向滚动（极少情况） */
+  .math-display .katex { overflow-x: auto; }
+
+  /* 强制颜色打印 */
+  body { -webkit-print-color-adjust: exact; }
+}
+```
+
+#### 3.4 字体嵌入
+
+Chromium PDF 自动嵌入页面使用的字体。确保：
+1. HTML 中通过 `@font-face` 或 `<link>` 声明字体
+2. 字体文件在 `file://` 协议下可访问
+3. Playwright 启动时传递 `--font-render-hinting=none`（已配置）
+
+#### 3.5 大文档分页
+
+- **Chromium 自动分页**：基于 A4 尺寸自动分页，无需手动计算
+- **Print CSS `page-break-before/after`**：控制章节分页
+- **`orphans: 2; widows: 2`**：避免孤行
+- **Header/Footer**：Chromium 的 `header_template` / `footer_template` 支持 `pageNumber` / `totalPages` 占位符
+
+#### 3.6 KaTeX SSR 渲染确认
+
+```python
+# 替代 wait_for_timeout — 等待 KaTeX DOM 确实渲染完成
+page.wait_for_function(
+    "document.querySelectorAll('.katex-html').length > 0 || "
+    "document.querySelectorAll('.math-display').length === 0",
+    timeout=10000
+)
+```
+
+---
+
+### 4. EPUB 导出架构
+
+#### 4.1 EPUB 内部结构
+
+```
+document.epub (ZIP)
+├── mimetype                  ("application/epub+zip")
+├── META-INF/
+│   └── container.xml
+└── OEBPS/
+    ├── content.opf           (metadata + spine + manifest)
+    ├── toc.ncx               (NCX navigation)
+    ├── nav.xhtml             (HTML5 nav for EPUB3)
+    ├── css/
+    │   ├── print.css         (复用！与 Web Reader 同一套)
+    │   └── katex.min.css
+    ├── images/
+    │   └── *.png
+    └── xhtml/
+        ├── cover.xhtml
+        ├── chapter-01.xhtml
+        ├── chapter-02.xhtml
+        └── ...
+```
+
+#### 4.2 HTML → EPUB Pipeline
+
+```
+Document AST
+  │
+  ▼
+HTMLRenderer (mode="epub")
+  │  与 Print 模式共用 print.css
+  │  额外处理：
+  │    - KaTeX CSS inline
+  │    - 图片 Base64 → <img> 标签
+  │    - 按 heading level=1 分章节
+  │
+  ▼
+章节化 HTML 文件 (chapter-*.xhtml)
+  │
+  ▼
+ebooklib (Python) 打包
+  │  epub.set_metadata(...)
+  │  epub.add_css(print.css)
+  │  epub.add_chapter(chapter)
+  │  epub.write()
+  ▼
+.epub 文件
+```
+
+#### 4.3 数学公式兼容
+
+EPUB 对 KaTeX 的兼容策略：
+
+| 方案 | Kindle | iBooks | 通用阅读器 |
+|------|:---:|:---:|:---:|
+| KaTeX HTML + CSS inline | ⚠️ | ✅ | ✅ |
+| MathML | ✅ | ✅ | ⚠️ |
+| SVG 图片（KaTeX→SVG） | ✅ | ✅ | ✅ |
+
+**推荐策略**：**KaTeX HTML + 降级 SVG**
+
+1. **首选**：内联 KaTeX HTML + KaTeX CSS（EPUB3 阅读器如 iBooks、Thorium 完美支持）
+2. **降级**：对 Kindle 等老旧 EPUB2 阅读器，将关键公式转为 SVG 嵌入
+
+```python
+# KaTeX → SVG 降级（通过 Node.js）
+import subprocess
+def katex_to_svg(latex: str, display: bool = True) -> str:
+    result = subprocess.run(
+        ["npx", "katex", latex, "--output", "mathml" if else "html"],
+        capture_output=True, text=True
+    )
+    return result.stdout
+```
+
+#### 4.4 CSS 适配
+
+```css
+/* EPUB 额外规则 — 附加到 print.css 之后 */
+@supports (display: flex) {
+  /* EPUB3 才支持的现代布局 */
+  .math-display { display: flex; justify-content: center; }
+}
+
+/* Kindle 兼容 — 回退到简单布局 */
+.kfx .math-display {
+  text-align: center;
+  page-break-inside: avoid;
+}
+```
+
+#### 4.5 导航（NCX + NAV）
+
+```xml
+<!-- toc.ncx — EPUB2 兼容 -->
+<navMap>
+  <navPoint id="ch1" playOrder="1">
+    <navLabel><text>Introduction</text></navLabel>
+    <content src="xhtml/chapter-01.xhtml"/>
+  </navPoint>
+</navMap>
+
+<!-- nav.xhtml — EPUB3 -->
+<nav epub:type="toc">
+  <ol>
+    <li><a href="xhtml/chapter-01.xhtml">Introduction</a></li>
+  </ol>
+</nav>
+```
+
+---
+
+### 5. DOCX 导出架构
+
+#### 5.1 AST → python-docx 映射
+
+| Block Type | python-docx 方法 | 样式 |
+|-----------|-----------------|------|
+| `heading` (level=1) | `doc.add_heading(text, level=1)` | `Heading 1` |
+| `heading` (level=2) | `doc.add_heading(text, level=2)` | `Heading 2` |
+| `paragraph` | `doc.add_paragraph()` | `Normal` |
+| `code_block` | 手动 paragraph + Consolas font | `Code` |
+| `math_block` | paragraph + italic `[ ... ]` 标记 | `Math` |
+| `bullet_list` | `doc.add_paragraph(style='List Bullet')` | `List Bullet` |
+| `ordered_list` | `doc.add_paragraph(style='List Number')` | `List Number` |
+| `blockquote` | paragraph + `left_indent=0.5inch` | `Quote` |
+| `table` | `doc.add_table(rows, cols)` | `Table Grid` |
+| `figure` | `doc.add_picture(stream)` | 居中 |
+| `page_break` | `doc.add_page_break()` | — |
+
+#### 5.2 样式映射
+
+已在 [docx_renderer.py](file:///d:/pythontest/translation-platform/backend/app/services/parser/docx_renderer.py) 中实现：
+- 字体：Times New Roman 12pt（正文）/ Consolas 10pt（代码）
+- 标题大小：H1=20pt, H2=18pt, H3=16pt
+- 行距：正文 1.5 倍行距 / 代码单倍行距
+- 页面：A4 (8.27×11.69 inches)，1英寸页边距
+
+#### 5.3 数学公式处理
+
+当前 DOCX 不原生支持 KaTeX/MathML，采用**回退标记**方案：
+
+```python
+# 行内公式：italic 字体 + 括号标注
+run = p.add_run(f"({math_content})")
+run.font.italic = True
+
+# 显示公式：居中段落
+p.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+run = p.add_run(f"[ {math_content} ]")
+```
+
+**长期方案**（可选）：使用 MathML→OMML 转换（Word 原生公式格式）。
+
+---
+
+### 6. Web Reader 与 Export 一致性
+
+#### 6.1 如何保证一致
+
+```
+┌─────────────────────────────────────────────┐
+│         同一份代码路径                        │
+│                                              │
+│  AST → BlockRenderer → print.css → Output    │
+│                                              │
+│  mode="reader"  → screen media → Web Reader  │
+│  mode="print"   → print media  → PDF         │
+│  mode="export"  → inline CSS   → HTML file   │
+└─────────────────────────────────────────────┘
+```
+
+#### 6.2 共享清单
+
+| 共享资源 | 使用方式 |
+|---------|---------|
+| **AST types** | TS ↔ Python 字段一一对应 |
+| **BlockRenderer** | 同一组件，三种 mode |
+| **print.css** | 同一CSS，三种 media 查询 |
+| **Typography tokens** | CSS custom properties，一处定义 |
+| **KaTeX** | `katex.renderToString()` — SS/CSR/Export 同一API |
+| **Image renderer** | `<img>` + `figure` 标签，不依赖 canvas |
+
+#### 6.3 如何避免 "Web 正常 / PDF 错乱"
+
+1. **永远不依赖运行时 JavaScript 的布局计算** — 所有布局由 CSS 控制
+2. **使用 CSS `@page` 规则**统一 PDF 页面尺寸，而非 JS 动态计算
+3. **测试：在浏览器 DevTools 中模拟 `@media print`** 预览 PDF 效果
+4. **CI 中自动化对比**：Playwright 生成 PDF 截图 vs Web Reader 截图
+
+---
+
+### 7. 数学公式导出
+
+#### 7.1 KaTeX SSR 策略
+
+```
+KaTeX LaTeX Input
+      │
+      ├──→ katex.renderToString() → HTML string → SSR / Client hydrate
+      │
+      ├──→ (alternate) katex.__renderToDomTree() → React elements
+      │
+      └──→ (fallback) SVG via node-katex → <img src="data:image/svg+xml;...">
+```
+
+**当前选择**：`katex.renderToString()` + `dangerouslySetInnerHTML`
+
+#### 7.2 各格式策略
+
+| 格式 | 策略 | 兼容性 |
+|------|------|:---:|
+| **Web** | `katex.renderToString()` → SSR + hydrate | ✅ 完美 |
+| **PDF** | 同上 → Chromium 渲染 KaTeX HTML | ✅ 完美 |
+| **EPUB** | KaTeX HTML + KaTeX CSS inline + SVG 降级 | ✅ |
+| **DOCX** | Italic 文本 + `[ ... ]` 标记 | ⚠️ 可读 |
+| **Markdown** | 原始 `$...$` / `$$...$$` 保留 | ✅ 完美 |
+
+#### 7.3 长公式处理
+
+```css
+/* 溢出时横向滚动，不截断、不缩小 */
+.math-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 允许 KaTeX 在特定位置换行 */
+.math-display .katex { white-space: normal; }
+```
+
+#### 7.4 OCR 数学公式
+
+PaddleOCR 输出：
+- 行内公式：`$E = mc^2$` 或 `\(E = mc^2\)`
+- 显示公式：`\begin{equation}...\end{equation}`
+
+AI 翻译可以在翻译过程中保留公式占位符，翻译完成后再用 AST 重新组装。
+
+---
+
+### 8. OCR 与图片处理
+
+#### 8.1 OCR Block 保留
+
+每个 OCR 识别的区域在 AST 中保留为 `ocr_region` Block：
+
+```typescript
+{
+  type: "ocr_region",
+  ocrRegion: {
+    bbox: { x: 100, y: 200, width: 300, height: 50, page: 3 },
+    type: "figure",
+    confidence: 0.95,
+    text: "Figure 1: Architecture overview"
+  }
+}
+```
+
+#### 8.2 图片导出策略
+
+| 场景 | 策略 |
+|------|------|
+| **Web Reader** | `<img src="/api/images/{doc_id}/{hash}">` + lazy loading |
+| **HTML Export** | Base64 data URI（`embed_images: true`） |
+| **PDF Export** | Playwright 自动渲染 `<img>`，base64 直接嵌入 |
+| **EPUB Export** | 图片解码后写入 EPUB ZIP，`<img src="../images/fig1.png">` |
+| **DOCX Export** | `doc.add_picture(BytesIO(base64decode(data)))` |
+
+#### 8.3 图片压缩
+
+```python
+# Large figure → compressed JPEG for export
+from PIL import Image
+def compress_figure(data: bytes, max_width: int = 1200) -> bytes:
+    img = Image.open(BytesIO(data))
+    if img.width > max_width:
+        ratio = max_width / img.width
+        new_size = (max_width, int(img.height * ratio))
+        img = img.resize(new_size, Image.LANCZOS)
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=85, optimize=True)
+    return buf.getvalue()
+```
+
+---
+
+### 9. Print CSS 系统
+
+完整实现文件：[print.css](file:///d:/pythontest/translation-platform/frontend/src/ast/print.css)
+
+#### 9.1 覆盖的模块
+
+| 模块 | CSS 类 | 关键规则 |
+|------|--------|---------|
+| Typography | `.document-renderer` | `--font-body`, `--line-height-body`, `text-align: justify` |
+| Margin | `@page` | `margin: 2.5cm 2cm 2cm 2.5cm` |
+| Font | `@font-face` (inline) | Inter, Noto Sans SC, JetBrains Mono |
+| Page Size | `@page { size: A4; }` | 可切换 Letter |
+| TOC | `.toc-block` | `page-break-after: always` |
+| Citation | `.citation-list` | `font-size: 0.9em` |
+| Figure | `.figure-block` | `max-width: 100%; page-break-inside: avoid` |
+| Formula | `.math-display` | `overflow-x: auto; page-break-inside: avoid` |
+| Table | `.doc-table` | `border-collapse: collapse; page-break-inside: avoid` |
+| Page Break | `.page-break` | `page-break-after: always` |
+| Dual Column | `.column-layout.two-column` | `column-count: 2; column-gap: 1.5em` |
+
+#### 9.2 两种模式 CSS
+
+```css
+/* 双栏模式 — 学术论文双栏 */
+.column-layout.two-column {
+  column-count: 2;
+  column-gap: 1.5em;
+  column-rule: 1px solid var(--color-border);
+
+  h1, h2, .math-display, .figure-block, .table-wrapper {
+    column-span: all;  /* 关键元素跨栏 */
+  }
+}
+
+/* 单栏模式 — A4 默认 */
+.document-renderer:not(.two-column) {
+  max-width: none;
+}
+```
+
+---
+
+### 10. 推荐目录结构
+
+```
+translation-platform/
+├── frontend/                          # Next.js 14 App Router
+│   ├── src/
+│   │   ├── ast/                       # ★ AST 模块（核心共享层）
+│   │   │   ├── index.ts               #    barrel export
+│   │   │   ├── block-schema.ts        #    TS AST 类型定义
+│   │   │   ├── block-renderer.tsx     #    Shared Block Renderer
+│   │   │   └── print.css              #    Print CSS + Design Tokens
+│   │   ├── renderer/                  # ★ 渲染器（新增）
+│   │   │   ├── web/                   #    Web Reader 渲染器
+│   │   │   │   ├── DualPaneReader.tsx
+│   │   │   │   ├── DocumentView.tsx
+│   │   │   │   ├── MathRenderer.tsx
+│   │   │   │   └── TOC.tsx
+│   │   │   ├── export/                #    Export 渲染引擎
+│   │   │   │   ├── html-renderer.ts   #    AST → HTML (SSR)
+│   │   │   │   ├── print-layout.tsx   #    Print 布局组件
+│   │   │   │   └── epub-renderer.ts   #    AST → EPUB HTML
+│   │   │   └── shared/               #    共享渲染工具
+│   │   │       ├── inline-renderer.ts
+│   │   │       └── math-engine.ts
+│   │   ├── themes/                    # ★ 主题系统（新增）
+│   │   │   ├── tokens.css             #    CSS custom properties
+│   │   │   ├── academic.css           #    学术风格
+│   │   │   ├── modern.css             #    现代风格
+│   │   │   ├── dark.css               #    深色模式
+│   │   │   └── print-overrides.css    #    打印覆盖
+│   │   ├── print/                     # ★ 打印样式（新增）
+│   │   │   ├── academic-print.css     #    学术打印
+│   │   │   ├── a4.css                 #    A4 纸张
+│   │   │   ├── letter.css             #    Letter 纸张
+│   │   │   └── mobile-print.css       #    移动端打印
+│   │   ├── components/                # 现有组件
+│   │   │   ├── reader/               #    DualPaneReader, DocumentView, ...
+│   │   │   ├── export/               #    ExportModal
+│   │   │   └── ui/                   #    Button, Dialog, ...
+│   │   ├── hooks/                     # useSyncScroll, useExport, ...
+│   │   ├── store/                     # Zustand store
+│   │   ├── types/                     # API types (Project, TranslationResult...)
+│   │   ├── lib/                       # api.ts, utils.ts
+│   │   └── app/                       # Next.js 路由
+│   ├── tailwind.config.ts
+│   └── package.json
+│
+├── backend/                           # FastAPI
+│   ├── app/
+│   │   ├── models/
+│   │   │   ├── schemas.py
+│   │   │   └── block_schema.py        # ★ Python AST 定义
+│   │   ├── services/
+│   │   │   ├── parser/                # ★ 解析器
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── markdown_parser.py
+│   │   │   │   ├── ast_renderer.py    # AST → Markdown
+│   │   │   │   ├── html_renderer.py   # AST → HTML
+│   │   │   │   └── docx_renderer.py   # AST → DOCX
+│   │   │   ├── export/                # ★ 导出器
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── html_exporter.py
+│   │   │   │   ├── markdown_exporter.py
+│   │   │   │   ├── pdf_exporter.py
+│   │   │   │   ├── docx_exporter.py
+│   │   │   │   └── epub_exporter.py   # ★ 新增
+│   │   │   ├── pipeline/              # ★ 导出流水线（新增）
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── export_worker.py   #   后台导出 Worker
+│   │   │   │   ├── export_queue.py    #   导出任务队列
+│   │   │   │   └── temp_manager.py    #   临时文件管理
+│   │   │   ├── translator.py
+│   │   │   └── ocr.py
+│   │   ├── routes/
+│   │   │   ├── export.py
+│   │   │   └── projects.py
+│   │   └── utils/
+│   │       └── parser.py
+│   └── requirements.txt
+│
+└── DEV_NOTES.md                       # 本文件
+```
+
+---
+
+### 11. 技术选型推荐
+
+#### 11.1 Frontend
+
+| 层级 | 选型 | 理由 |
+|------|------|------|
+| **Renderer** | 自定义 `BlockRenderer` (React) | 完全控制→Print CSS 一致 |
+| **Virtualization** | `@tanstack/react-virtual` | 大文档虚拟滚动 |
+| **Theme Engine** | CSS Custom Properties + Tailwind | 零运行时开销 |
+| **State** | Zustand (已有) | 轻量，与 React 解耦 |
+| **Math** | KaTeX (已有) | SSR 支持，比 MathJax 快 10× |
+| **SSR** | Next.js 14 Server Components (已有) | KaTeX 可服务端渲染 |
+
+#### 11.2 Backend
+
+| 层级 | 选型 | 理由 |
+|------|------|------|
+| **Export Worker** | `asyncio.create_task` / `BackgroundTasks` | 轻量，无需 Celery |
+| **Queue** | `asyncio.Queue` + 内存队列 | 当前规模足够 |
+| **Storage** | 本地文件系统 (已有) | 如需扩展→S3/MinIO |
+| **EPUB** | `ebooklib` | Python 原生，EPUB2/3 兼容 |
+| **DOCX** | `python-docx` (已有) | 成熟稳定 |
+| **PDF** | Playwright (已有) | Chromium PDF 引擎 |
+
+#### 11.3 方案对比表
+
+| 需求 | 推荐方案 A | 替代方案 B | 不推荐 |
+|------|-----------|-----------|--------|
+| **PDF** | Playwright Chromium PDF | Puppeteer (API 几乎相同) | WeasyPrint (无 JS) |
+| **EPUB** | ebooklib | - | 手写 XML |
+| **Math (Web)** | KaTeX SSR | MathJax | Canvas 截图 |
+| **Math (EPUB 降级)** | KaTeX→SVG | MathJax-node→SVG | 图片 |
+| **OCR** | PaddleOCR (已有) | Tesseract | - |
+| **Layout Parse** | LayoutParser | docTR | - |
+| **Queue** | asyncio.Queue | Celery + Redis | - |
+| **大文档导出** | 流式生成 + temp 文件 | - | 内存全量 |
+
+---
+
+### 12. Worker 与异步导出架构
+
+#### 12.1 导出任务生命周期
+
+```
+用户点击"导出"
+      │
+      ▼
+POST /api/projects/{pid}/documents/{did}/export
+      │
+      ▼
+创建 ExportTask { id, status: "queued", progress: 0 }
+      │
+      ▼
+加入 asyncio.Queue
+      │
+      ▼
+ExportWorker 取任务
+      │  status → "processing"
+      │  progress 逐步更新 (0→100)
+      │
+      ├──▶ 小文档 (< 5MB): 同步返回
+      │
+      └──▶ 大文档: WebSocket 推送 progress
+            │  WebSocket msg: { type: "progress", progress: 60 }
+            │  WebSocket msg: { type: "done", download_url: "/api/..." }
+            ▼
+         客户端下载 / 自动触发 download
+```
+
+#### 12.2 实现骨架
+
+```python
+# backend/app/services/pipeline/export_queue.py
+import asyncio
+from dataclasses import dataclass
+from typing import Optional, Callable, Awaitable
+from enum import Enum
+
+class ExportStatus(str, Enum):
+    queued = "queued"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+
+@dataclass
+class ExportTask:
+    id: str
+    status: ExportStatus
+    progress: int
+    result: Optional[bytes]
+    error: Optional[str]
+    format: str  # "pdf" | "epub" | "docx" | "md" | "html"
+    project_id: str
+    doc_id: str
+
+class ExportQueue:
+    def __init__(self, max_workers: int = 2):
+        self._queue: asyncio.Queue[ExportTask] = asyncio.Queue()
+        self._tasks: dict[str, ExportTask] = {}
+        self._workers: list[asyncio.Task] = []
+        self._max_workers = max_workers
+
+    async def enqueue(self, task: ExportTask) -> ExportTask:
+        self._tasks[task.id] = task
+        await self._queue.put(task)
+        return task
+
+    def get_task(self, task_id: str) -> Optional[ExportTask]:
+        return self._tasks.get(task_id)
+
+    async def start(self, handler: Callable[[ExportTask], Awaitable[bytes]]):
+        async def worker():
+            while True:
+                task = await self._queue.get()
+                task.status = ExportStatus.processing
+                try:
+                    task.result = await handler(task)
+                    task.status = ExportStatus.completed
+                    task.progress = 100
+                except Exception as e:
+                    task.status = ExportStatus.failed
+                    task.error = str(e)
+                finally:
+                    self._queue.task_done()
+
+        for _ in range(self._max_workers):
+            self._workers.append(asyncio.create_task(worker()))
+```
+
+#### 12.3 WebSocket 进度推送
+
+```
+Client                           Server
+  │                                │
+  │──── WS connect ───────────────▶│
+  │                                │
+  │  ◀── { type: "progress",      │
+  │         progress: 30 }         │
+  │                                │
+  │  ◀── { type: "progress",      │
+  │         progress: 80 }         │
+  │                                │
+  │  ◀── { type: "done",          │
+  │         download_url: "/..." } │
+  │                                │
+```
+
+#### 12.4 临时文件管理
+
+```python
+# backend/app/services/pipeline/temp_manager.py
+import tempfile, shutil, time
+from pathlib import Path
+
+class TempManager:
+    def __init__(self, base_dir: Path, ttl_seconds: int = 3600):
+        self.base_dir = base_dir
+        self.ttl = ttl_seconds
+        self.base_dir.mkdir(exist_ok=True)
+
+    def create(self, prefix: str, suffix: str) -> Path:
+        fd, path = tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=self.base_dir)
+        return Path(path)
+
+    async def cleanup(self):
+        """删除超过 TTL 的临时文件"""
+        now = time.time()
+        for f in self.base_dir.glob("*"):
+            if now - f.stat().st_mtime > self.ttl:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+```
+
+#### 12.5 缓存策略
+
+```python
+CACHE_PREFIX = "export:"
+CACHE_TTL = 86400  # 24 小时
+
+# 缓存 key 计算
+def cache_key(project_id: str, doc_id: str, format: str, options_hash: str) -> str:
+    return f"{CACHE_PREFIX}{project_id}:{doc_id}:{format}:{options_hash}"
+
+# 使用示例
+# 如果 24 小时内相同参数导出相同文档，直接返回缓存结果
+```
+
+---
+
+### 实现优先级与路线图
+
+| 优先级 | 任务 | 预估影响 |
+|:---:|------|------|
+| P0 | TypeScript AST 类型定义 (block-schema.ts) ✅ 已完成 | 基础 |
+| P0 | Shared BlockRenderer 组件 ✅ 已完成 | 渲染一致性 |
+| P0 | Print CSS 系统 ✅ 已完成 | PDF/EPUB 排版 |
+| P1 | `DocumentView.tsx` 迁移到 `BlockRenderer` | 消除重复解析逻辑 |
+| P1 | EPUB Exporter (ebooklib) | 新格式支持 |
+| P1 | Export Queue + Worker | 大文档导出不阻塞 |
+| P2 | 数学公式 SVG 降级 (EPUB) | Kindle 兼容 |
+| P2 | 虚拟滚动 (大文档阅读) | 性能 |
+| P2 | CI 截图对比测试 | 防止回归 |
