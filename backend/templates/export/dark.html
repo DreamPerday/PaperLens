@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            line-height: 1.7;
+            font-size: {{ font_size }}pt;
+            color: #e4e4e7;
+            background: #18181b;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        h1, h2, h3 { color: #fafafa; }
+        pre { background: #27272a; padding: 1em; border-radius: 8px; }
+        code { background: #3f3f46; padding: 0.2em 0.4em; border-radius: 4px; }
+        blockquote { border-left: 4px solid #8b5cf6; background: #27272a; }
+        table { border-color: #3f3f46; }
+        th { background: #3f3f46; }
+    </style>
+</head>
+<body>
+    {{ original_content|safe }}
+    {{ translated_content|safe }}
+</body>
+</html>

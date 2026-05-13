@@ -1,0 +1,67 @@
+# ======================
+# Environment & Secrets
+# ======================
+.env
+.env.*
+!.env.example
+.env.local
+*.local
+
+# ======================
+# Python Cache
+# ======================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# ======================
+# Build Artifacts
+# ======================
+.next/
+next-env.d.ts
+*.tsbuildinfo
+dist/
+build/
+
+# ======================
+# Dependencies
+# ======================
+node_modules/
+.pnp
+.pnp.js
+
+# ======================
+# IDE / Editor
+# ======================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+
+# ======================
+# OS Files
+# ======================
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# ======================
+# Runtime / Storage
+# ======================
+backend/storage/
+/storage/
+*.parsed.cache
+token_history/
+*.log
+
+# ======================
+# Docker
+# ======================
+.docker/
+docker-compose.override.yml

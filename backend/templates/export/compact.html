@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <style>
+        body { font-family: sans-serif; line-height: 1.5; font-size: 12pt; max-width: 100%; margin: 0; padding: 1rem; }
+        h1 { font-size: 1.4em; } h2 { font-size: 1.2em; } h3 { font-size: 1.1em; }
+        pre { font-size: 0.9em; padding: 0.5em; }
+        img { max-width: 100%; }
+        table { font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    {{ original_content|safe }}
+    {{ translated_content|safe }}
+</body>
+</html>
