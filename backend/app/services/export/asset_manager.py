@@ -13,7 +13,7 @@ class AssetManager:
         self.cache: Dict[str, str] = {}
         self.processed_images: set = set()
         
-    async def collect_images(self, content: str, _doc_id: str) -> Tuple[str, List[dict]]:
+    async def collect_images(self, content: str, doc_id: str) -> Tuple[str, List[dict]]:
         img_pattern = r'<img[^>]+src="([^"]+)"[^>]*\/?>'
         matches = list(re.finditer(img_pattern, content))
         images = []
@@ -76,6 +76,9 @@ class AssetManager:
     
     def clear_cache(self):
         self.cache.clear()
+        self.processed_images.clear()
+    
+    def clear_processed_only(self):
         self.processed_images.clear()
     
     def get_cache_size(self) -> int:

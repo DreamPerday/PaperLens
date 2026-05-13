@@ -1,10 +1,12 @@
 import os
+import hashlib
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 class TemplateManager:
     def __init__(self, template_dir: str = "templates/export"):
         self.template_dir = Path(template_dir)
+        self._hash_file = self.template_dir / ".template_hashes"
         self.env = Environment(
             loader=FileSystemLoader(self.template_dir),
             autoescape=select_autoescape(['html', 'xml']),
@@ -12,10 +14,32 @@ class TemplateManager:
             lstrip_blocks=True
         )
         self._ensure_templates()
-    
+
     def _ensure_templates(self):
         self.template_dir.mkdir(parents=True, exist_ok=True)
         self._create_default_templates()
+
+    def _load_hashes(self) -> dict:
+        if not self._hash_file.exists():
+            return {}
+        hashes = {}
+        with open(self._hash_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    hashes[parts[0]] = parts[1]
+        return hashes
+
+    def _save_hashes(self, hashes: dict):
+        with open(self._hash_file, "w", encoding="utf-8") as f:
+            for name, h in hashes.items():
+                f.write(f"{name}:{h}\n")
+
+    def _compute_hash(self, content: str) -> str:
+        return hashlib.md5(content.encode("utf-8")).hexdigest()
     
     def _create_default_templates(self):
         academic_template = """<!DOCTYPE html>
@@ -437,6 +461,23 @@ class TemplateManager:
     </div>
     {% endif %}
     
+    {% if include_original %}
+    <div class="content-section avoid-break">
+        <h1 class="section-title">原文 / Original</h1>
+        {{ original_content|safe }}
+    </div>
+    {% endif %}
+    
+    {% if include_translation %}
+    {% if include_original %}
+    <hr class="page-break" style="border: none; page-break-after: always;">
+    {% endif %}
+    <div class="content-section avoid-break">
+        <h1 class="section-title">译文 / Translation</h1>
+        {{ translated_content|safe }}
+    </div>
+    {% endif %}
+    
     <script>
         document.addEventListener("DOMContentLoaded", function() {
             if (typeof renderMathInElement !== 'undefined') {
@@ -464,6 +505,9 @@ class TemplateManager:
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
     <style>
         * {
             -webkit-print-color-adjust: exact !important;
@@ -797,22 +841,24 @@ class TemplateManager:
     </div>
     {% endif %}
     
-    {% if include_original %}
-    <div class="content-section avoid-break">
-        <h1 class="section-title">原文 / Original</h1>
-        {{ original_content|safe }}
-    </div>
-    {% endif %}
-    
-    {% if include_translation %}
-    {% if include_original %}
-    <hr class="page-break" style="border: none; page-break-after: always;">
-    {% endif %}
-    <div class="content-section avoid-break">
-        <h1 class="section-title">译文 / Translation</h1>
-        {{ translated_content|safe }}
-    </div>
-    {% endif %}
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            if (typeof renderMathInElement !== 'undefined') {
+                renderMathInElement(document.body, {
+                    delimiters: [
+                        {left: "$$", right: "$$", display: true},
+                        {left: "\\[", right: "\\]", display: true},
+                        {left: "$", right: "$", display: false},
+                        {left: "\\(", right: "\\)", display: false}
+                    ],
+                    throwOnError: false,
+                    errorColor: '#cc0000',
+                    trust: true,
+                    strict: false
+                });
+            }
+        });
+    </script>
 </body>
 </html>"""
         
@@ -961,6 +1007,9 @@ class TemplateManager:
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
     <style>
         @page {
             size: {{ page_size }};
@@ -1011,6 +1060,25 @@ class TemplateManager:
         {{ translated_content|safe }}
     </div>
     {% endif %}
+    
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            if (typeof renderMathInElement !== 'undefined') {
+                renderMathInElement(document.body, {
+                    delimiters: [
+                        {left: "$$", right: "$$", display: true},
+                        {left: "\\[", right: "\\]", display: true},
+                        {left: "$", right: "$", display: false},
+                        {left: "\\(", right: "\\)", display: false}
+                    ],
+                    throwOnError: false,
+                    errorColor: '#cc0000',
+                    trust: true,
+                    strict: false
+                });
+            }
+        });
+    </script>
 </body>
 </html>"""
         
@@ -1021,9 +1089,24 @@ class TemplateManager:
             "compact.html": compact_template
         }
         
+        existing_hashes = self._load_hashes()
+        new_hashes = {}
+        
         for name, content in templates.items():
             template_path = self.template_dir / name
-            template_path.write_text(content, encoding="utf-8")
+            content_hash = self._compute_hash(content)
+            new_hashes[name] = content_hash
+            if existing_hashes.get(name) != content_hash or not template_path.exists():
+                template_path.write_text(content, encoding="utf-8")
+        
+        if new_hashes != existing_hashes:
+            self._save_hashes(new_hashes)
+            self.env = Environment(
+                loader=FileSystemLoader(self.template_dir),
+                autoescape=select_autoescape(['html', 'xml']),
+                trim_blocks=True,
+                lstrip_blocks=True
+            )
     
     def render(self, template_name: str, **context) -> str:
         template = self.env.get_template(template_name)

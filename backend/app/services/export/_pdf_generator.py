@@ -37,7 +37,20 @@ try:
         )
         page = context.new_page()
         page.goto("file:///" + html_path.replace("\\", "/"), wait_until="load", timeout=120000)
-        page.wait_for_timeout(1000)
+        try:
+            page.wait_for_function(
+                """(() => {
+                    const hasKatex = document.querySelector('script[src*="katex.min.js"]') !== null;
+                    if (!hasKatex) return true;
+                    const hasMath = document.querySelector('.math-block, .math-inline') !== null;
+                    if (!hasMath) return true;
+                    return document.querySelector('.katex, .katex-display') !== null;
+                })()""",
+                timeout=20000
+            )
+        except Exception:
+            pass
+        page.wait_for_timeout(1500)
         page.pdf(
             path=output_path,
             format=page_size,

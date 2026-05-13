@@ -10,7 +10,7 @@ class HTMLExporter:
         self.template_manager = TemplateManager()
     
     def _protect_math(self, content: str) -> Tuple[str, List[str]]:
-        math_pattern = r'(\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|(?<!\$)\$(?!\$)[^$]+(?<!\$)\$(?!\$))'
+        math_pattern = r'(\\begin\{[^}]*\}[\s\S]*?\\end\{[^}]*\}|\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|(?<!\$)\$(?!\$)[^$]+(?<!\$)\$(?!\$))'
         math_blocks = []
         def replace_match(match):
             idx = len(math_blocks)
@@ -27,6 +27,8 @@ class HTMLExporter:
             elif block.startswith("\\["):
                 inner = block[2:-2].strip()
                 html_block = f'<div class="math-block">\\[{inner}\\]</div>'
+            elif block.startswith("\\begin"):
+                html_block = f'<div class="math-block">\\[{block}\\]</div>'
             elif block.startswith("\\("):
                 inner = block[2:-2].strip()
                 html_block = f'<span class="math-inline">\\({inner}\\)</span>'
@@ -42,6 +44,8 @@ class HTMLExporter:
         html = md_lib.markdown(protected, extensions=md_extensions)
         html = re.sub(r'<h(\d+)>', r'<h\1 class="keep-with-next">', html)
         html = self._restore_math_html(html, math_blocks)
+        html = re.sub(r'<p>\s*<div class="math-block">', r'<div class="math-block">', html)
+        html = re.sub(r'</div>\s*</p>', r'</div>', html)
         return html
     
     async def export(self, original_text: str, translated_text: str, doc_id: str, title: str = "Translation",
@@ -53,7 +57,7 @@ class HTMLExporter:
         
         if embed_images:
             original_text = await self.asset_manager.embed_images(original_text, doc_id)
-            self.asset_manager.clear_cache()
+            self.asset_manager.clear_processed_only()
             translated_text = await self.asset_manager.embed_images(translated_text, doc_id)
         
         original_html = self._markdown_to_html(original_text) if original_text else ""
@@ -95,7 +99,7 @@ class HTMLExporter:
         for match in re.finditer(heading_pattern, content):
             level = int(match.group(1))
             text = match.group(2).strip()
-            anchor = text.lower().replace(" ", "-").replace("[^a-z0-9-]", "")
+            anchor = re.sub(r'[^a-z0-9-]', '', text.lower().replace(" ", "-"))
             toc_items.append((level, text, anchor))
         
         toc_html = '<ul>'

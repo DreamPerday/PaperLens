@@ -417,6 +417,23 @@
     </div>
     {% endif %}
     
+    {% if include_original %}
+    <div class="content-section avoid-break">
+        <h1 class="section-title">原文 / Original</h1>
+        {{ original_content|safe }}
+    </div>
+    {% endif %}
+    
+    {% if include_translation %}
+    {% if include_original %}
+    <hr class="page-break" style="border: none; page-break-after: always;">
+    {% endif %}
+    <div class="content-section avoid-break">
+        <h1 class="section-title">译文 / Translation</h1>
+        {{ translated_content|safe }}
+    </div>
+    {% endif %}
+    
     <script>
         document.addEventListener("DOMContentLoaded", function() {
             if (typeof renderMathInElement !== 'undefined') {

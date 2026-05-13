@@ -137,6 +137,71 @@ def _enrich_translation_with_images(original_text, translated_text, format_type)
 - **简单的启发式算法通常比精确的位置追踪更可靠**。当原文和译文的映射关系本身就是"近似"的时候，追索精确的字符偏移量只会引入更多 bug。
 - 图片位置问题在翻译场景中本质上是"内容对齐"问题，不是"字符级位置"问题。
 
+## 问题十三：数学公式正则表达式漏洞全面修复（`\(..\)` 阻塞 `)` 和 DOCX 图片丢失）
+
+### 背景
+
+用户反馈包含复杂符号（如 `\triangleq`、`\mathcal{S}_{++}^{n}`、`\mathbf{D}^{V}`、`\operatorname{vec}()`）的数学公式在导出中仍不完整。核心问题有三：
+
+1. `\(...\)` 行内公式的 `[^)]+` 阻止了 `)` 和换行符
+2. DOCX 导出中 `_strip_html` 先全局剥离 HTML,导致 `<img>` 标签丢失
+3. DOCX 列表中图片/公式以原始 HTML 形式残留
+
+### 根因分析
+
+#### 问题 1：`\(...\)` — `[^)]+` 过度限制
+
+```python
+# ❌ 旧正则：\([^)]+\) 阻止了内容中包含 ) 的情况
+# 例如 \(f(x) = x^2\) 中的 f(x 在第一个 ) 处就停止匹配，无法找到闭合的 \)
+math_pattern = r'(...\\\([^)]+\\\)|...)'
+# ✅ 新正则：\([\s\S]*?\) — 惰性匹配任意字符（包括 ) 和换行）
+math_pattern = r'(...\\\([\s\S]*?\\\)|...)'
+```
+
+#### 问题 2：DOCX 全局 HTML 剥离丢失图片
+
+```python
+# ❌ 旧流程：先剥离所有 HTML → 再解析 → <img> 标签永远匹配不到
+content = self._strip_html(content)  # 所有 <img> 被删除
+...
+html_img_match = re.search(r'<img...>', line)  # 永远找不到
+
+# ✅ 新流程：先转换 <img> 为 ![]() → 再剥离剩余 HTML
+content = re.sub(r'<img[^>]+src="([^"]+)"...>', r'![](\1)', content)
+content = re.sub(r'<[^>]+>', '', content)  # 此时已无 <img>
+```
+
+#### 问题 3：DOCX 列表/引用文本以原始字符串添加
+
+```python
+# ❌ 旧代码：列表和引用文本作为原始字符串添加 → HTML 标签残留
+p = doc.add_paragraph(style="List Bullet")
+run = p.add_run(line[2:])  # 可能包含 <img>、数学符号等
+
+# ✅ 新代码：使用相同的格式化运行处理器 → 图片/格式化全部处理
+p = doc.add_paragraph(style="List Bullet")
+self._add_formatted_runs(p, line[2:], doc)
+```
+
+### 验证结果
+
+运行 `_test_all_exporters.py` 综合测试脚本，100% 通过：
+
+| 导出格式 | 验证项 | 结果 |
+|---------|--------|------|
+| HTML | `\triangleq`/`\mathcal`/`\mathbf`/`\boldsymbol`/`\operatorname` 全部保留 | ✅ 18/18 |
+| Markdown | 无 HTML 标签残留、`![]()` 格式正确，4 种定界符完整 | ✅ 19/19 |
+| DOCX | ≥1KB 输出、ZIP 魔术字节 | ✅ 6/6 |
+| PDF | %PDF 魔术字节、≥1KB | ✅ 6/6 |
+
+### 其他 AI 可参考的经验
+
+- **`[^)]+` 看似简单地"匹配非 `)` 字符"，但在数学公式中 `)` 是合法字符（如 `f(x)`），必须使用惰性匹配 `[\s\S]*?`**
+- **HTML→单一格式转换的核心原则是：图片→统一中间格式→剥离 HTML→恢复格式化**。永远不要在剥离 HTML 后尝试匹配 HTML 标签
+- **正则捕获组编号偏移是重构中容易被忽略的问题**。删除一个模式分支（如 `<img>` 分支）后，后续所有 `groups[n]` 索引都需要 -1
+- 综合测试脚本是验证"混合格式→单一格式"转换正确性的关键工具，建议对所有导出器维护 CI 测试
+
 ## 问题一：前端文档渲染的性能与效果难题
 
 ### 背景

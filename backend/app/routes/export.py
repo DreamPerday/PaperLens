@@ -60,17 +60,32 @@ def _enrich_translation_with_images(original_text: str, translated_text: str, fo
     if not all_images:
         return translated_text
     
-    all_images.sort(key=lambda x: x[3])
+    o_paras = re.split(r'\n\n+', original_text)
+    img_para_indices = {}
+    for j, img in enumerate(all_images):
+        _, _, _, pos = img
+        para_idx = 0
+        search_start = 0
+        for pi, para in enumerate(o_paras):
+            para_start = original_text.find(para, search_start)
+            if para_start == -1:
+                break
+            para_end = para_start + len(para)
+            search_start = para_end
+            if para_start <= pos < para_end:
+                para_idx = pi
+                break
+        img_para_indices[j] = para_idx
     
     t_paras = re.split(r'\n\n+', translated_text)
     if not t_paras:
         return translated_text
     
-    step = max(1, len(t_paras) / max(1, len(all_images)))
-    
     assigned = {}
     for j, img in enumerate(all_images):
-        t_idx = min(len(t_paras) - 1, int(j * step))
+        o_ratio = img_para_indices[j] / max(1, len(o_paras) - 1)
+        t_idx = min(len(t_paras) - 1, int(o_ratio * (len(t_paras) - 1)))
+        t_idx = max(0, min(len(t_paras) - 1, t_idx))
         if t_idx not in assigned:
             assigned[t_idx] = []
         assigned[t_idx].append(img)

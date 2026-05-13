@@ -7,7 +7,7 @@ class MarkdownExporter:
         self.asset_manager = AssetManager()
     
     def _protect_math(self, content: str):
-        math_pattern = r'(\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|(?<!\$)\$(?!\$)[^$]+(?<!\$)\$(?!\$))'
+        math_pattern = r'(\\begin\{[^}]*\}[\s\S]*?\\end\{[^}]*\}|\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|(?<!\$)\$(?!\$)[^$]+(?<!\$)\$(?!\$))'
         math_blocks = []
         
         def replace_match(match):
@@ -24,12 +24,10 @@ class MarkdownExporter:
         return content
     
     def _strip_html_tags(self, content: str) -> str:
-        allowed_tags = {'br', 'hr'}
-        def replace_tag(m):
-            tag = m.group(1).lower().split()[0] if m.group(1) else ""
-            if tag.rstrip('>') in allowed_tags:
-                return m.group(0)
-            return ""
+        content = re.sub(r'<pre[^>]*>(.*?)</pre>', r'\n```\n\1\n```\n', content, flags=re.DOTALL | re.IGNORECASE)
+        content = re.sub(r'<code[^>]*>(.*?)</code>', r'`\1`', content, flags=re.IGNORECASE)
+        content = re.sub(r'<(?:strong|b)[^>]*>(.*?)</(?:strong|b)>', r'**\1**', content, flags=re.IGNORECASE)
+        content = re.sub(r'<(?:em|i)[^>]*>(.*?)</(?:em|i)>', r'*\1*', content, flags=re.IGNORECASE)
         content = re.sub(r'<(/?(?:p|div|span|h\d|ul|ol|li|table|tr|td|th|tbody|thead|section|article|header|footer|main|nav|aside|figure|figcaption|strong|em|b|i|u|s|sub|sup|code|pre|blockquote|dd|dt|dl|a|form|input|button|label|select|option|textarea|fieldset|legend)[^>]*)>', '', content)
         return content
     

@@ -31,7 +31,7 @@ REFERENCES_START_PATTERNS = [
 ]
 
 FORMULA_BLOCK_RE = re.compile(
-    r'(\$\$[\s\S]*?\$\$|\\begin\{[^}]*\}[\s\S]*?\\end\{[^}]*\})'
+    r'(\\begin\{[^}]*\}[\s\S]*?\\end\{[^}]*\}|\$\$[\s\S]*?\$\$)'
 )
 FORMULA_INLINE_RE = re.compile(r'(\$[^\$]+?\$)')
 

@@ -57,7 +57,8 @@ class DOCXExporter:
     
     def _add_formatted_runs(self, p, text, doc=None):
         inline_pattern = re.compile(
-            r'(\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|(?<!\$)\$(?!\$)[^$]+(?<!\$)\$(?!\$)|'
+            r'(\\begin\{[^}]*\}[\s\S]*?\\end\{[^}]*\}|'
+            r'\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|(?<!\$)\$(?!\$)[^$]+(?<!\$)\$(?!\$)|'
             r'!\[([^\]]*)\]\(([^)]+)\)|'
             r'\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`|__([^_]+)__)'
         )
@@ -151,19 +152,28 @@ class DOCXExporter:
         while i < len(lines):
             line = lines[i].strip()
             
-            if line.startswith("\\[") or line.startswith("$$"):
-                closer = "\\]" if line.startswith("\\[") else "$$"
-                if line.endswith(closer):
-                    inner = line[len(closer):-len(closer)].strip() if closer == "$$" else line[2:-2].strip()
+            if line.startswith("\\[") or line.startswith("$$") or line.startswith("\\begin"):
+                if line.startswith("\\begin"):
+                    env_match = re.match(r'\\begin\{([^}]*)\}', line)
+                    env_name = env_match.group(1) if env_match else ""
+                    closer = f"\\end{{{env_name}}}"
                 else:
-                    inner_lines = []
+                    closer = "\\]" if line.startswith("\\[") else "$$"
+                if line.endswith(closer):
+                    if line.startswith("\\begin"):
+                        inner = line.strip()
+                    elif closer == "$$":
+                        inner = line[len(closer):-len(closer)].strip()
+                    else:
+                        inner = line[2:-2].strip()
+                else:
+                    inner_lines = [line]
                     i += 1
-                    while i < len(lines) and not lines[i].strip().endswith(closer):
+                    while i < len(lines) and closer not in lines[i]:
                         inner_lines.append(lines[i])
                         i += 1
                     if i < len(lines):
-                        last_line = lines[i].strip()
-                        inner_lines.append(last_line[:-len(closer)])
+                        inner_lines.append(lines[i])
                     inner = "\n".join(inner_lines).strip()
                 p = doc.add_paragraph()
                 p.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
