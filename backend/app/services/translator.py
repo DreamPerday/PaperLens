@@ -9,13 +9,25 @@ from typing import Optional, Callable, Awaitable
 import httpx
 from app.config import settings
 
-TRANSLATE_PROMPT = """Translate the following English academic paragraph into fluent, professional Chinese.
+TRANSLATE_PROMPT = """Translate the following English academic text into fluent, professional Chinese.
+
+CRITICAL — Preserve ALL Markdown formatting markers EXACTLY as-is:
+- **bold text**: translate the text between ** and ** markers, keep the markers
+- *italic text*: translate the text between * and * markers, keep the markers  
+- `inline code`: translate the code text, keep the backticks
+- ### headings: translate heading text, keep ### prefix unchanged
+- - bullet / * bullet / + bullet list markers: keep markers, translate item text
+- 1. numbered / 2. numbered list markers: keep the "N. " prefix, translate item text
+- > blockquotes: keep > prefix, translate quoted text
+- ``` code blocks ```: keep block delimiters, translate code content
+- | table | rows |: keep pipe-separated table structure exactly
+- [link text](url): translate link text between [ and ], keep URL in ( )
+- Blank lines between paragraphs: preserve paragraph separation
 
 Rules:
 1. Keep proper names, mathematical symbols, variable names UNCHANGED.
-2. Keep paragraph structure and formatting.
-3. [FORMULA_N] placeholders MUST be preserved exactly as-is — do not modify, translate, or remove them.
-4. Output ONLY the Chinese translation, no explanations.
+2. [FORMULA_N] placeholders MUST be preserved exactly as-is — do not modify, translate, or remove them.
+3. Output ONLY the Chinese translation, no explanations.
 
 English text:
 {text}
@@ -34,6 +46,16 @@ FORMULA_BLOCK_RE = re.compile(
     r'(\\begin\{[^}]*\}[\s\S]*?\\end\{[^}]*\}|\$\$[\s\S]*?\$\$)'
 )
 FORMULA_INLINE_RE = re.compile(r'(\$[^\$]+?\$)')
+
+# Markdown structural formatting patterns to protect (prefixes only, content passes through)
+MD_HEADING_PREFIX_RE = re.compile(r'^(#{1,6}\s+)', re.MULTILINE)
+MD_LIST_PREFIX_RE = re.compile(r'^(\s*([-*+]|\d+\.)\s+)', re.MULTILINE)
+MD_BLOCKQUOTE_PREFIX_RE = re.compile(r'^(>\s*)', re.MULTILINE)
+MD_CODE_BLOCK_RE = re.compile(r'(```[\s\S]*?```)')
+MD_INLINE_CODE_RE = re.compile(r'(?<!\\)(`[^`\n]+?(?<!\\)`)')
+MD_BOLD_RE = re.compile(r'(\*\*[^*\n]+?\*\*)')
+MD_ITALIC_RE = re.compile(r'(?<!\*)(\*[^*\n]+?\*)(?!\*)')
+MD_LINK_RE = re.compile(r'(\[[^\]]+\]\([^)]+\))')
 
 MAX_CONCURRENT = 10
 MAX_RETRIES = 3
@@ -78,6 +100,37 @@ def _protect_formulas(text: str) -> tuple:
 def _restore_formulas(text: str, formulas: list) -> str:
     for i, f in enumerate(formulas):
         text = text.replace(f'[FORMULA_{i}]', f)
+    return text
+
+
+def _protect_formatting(text: str) -> tuple:
+    """Protect markdown formatting elements from AI translation modifications.
+
+    Replaces entire markdown-formatted spans with placeholders like [MDC_0].
+    The AI must preserve these placeholders; they are restored after translation.
+    Order matters: smaller spans protected first, then larger.
+    """
+    markers: list[str] = []
+
+    def _replace(pattern, m):
+        markers.append(m.group(0))
+        return f'[MDC_{len(markers) - 1}]'
+
+    text = MD_INLINE_CODE_RE.sub(lambda m: _replace(MD_INLINE_CODE_RE, m), text)
+    text = MD_ITALIC_RE.sub(lambda m: _replace(MD_ITALIC_RE, m), text)
+    text = MD_BOLD_RE.sub(lambda m: _replace(MD_BOLD_RE, m), text)
+    text = MD_LINK_RE.sub(lambda m: _replace(MD_LINK_RE, m), text)
+    text = MD_CODE_BLOCK_RE.sub(lambda m: _replace(MD_CODE_BLOCK_RE, m), text)
+    text = MD_BLOCKQUOTE_PREFIX_RE.sub(lambda m: _replace(MD_BLOCKQUOTE_PREFIX_RE, m), text)
+    text = MD_LIST_PREFIX_RE.sub(lambda m: _replace(MD_LIST_PREFIX_RE, m), text)
+    text = MD_HEADING_PREFIX_RE.sub(lambda m: _replace(MD_HEADING_PREFIX_RE, m), text)
+
+    return text, markers
+
+
+def _restore_formatting(text: str, markers: list) -> str:
+    for i, m in enumerate(markers):
+        text = text.replace(f'[MDC_{i}]', m)
     return text
 
 
@@ -162,6 +215,7 @@ async def _translate_single_chunk(
         api_url = f"{settings.deepseek_base_url}/v1/chat/completions"
 
         protected_text, formulas = _protect_formulas(chunk_text)
+        protected_text, format_markers = _protect_formatting(protected_text)
         prompt = TRANSLATE_PROMPT.format(text=protected_text)
 
         headers = {
@@ -194,6 +248,7 @@ async def _translate_single_chunk(
                         r'^((中文|Chinese)\s*)?(翻译|translation)[：:]\s*',
                         '', translated.strip()
                     )
+                    translated = _restore_formatting(translated, format_markers)
                     translated = _restore_formulas(translated, formulas)
                     usage = result.get("usage", {})
                     tokens = usage.get("total_tokens", len(chunk_text) // 2)
