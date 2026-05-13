@@ -858,3 +858,159 @@ return !!document.querySelector('.katex, .katex-display');  // 等 KaTeX 渲染�
 - **Markdown→HTML 转换后的 HTML 验证**：Python-Markdown 产生的 HTML 不是完全规范的，需要在关键位置（如公式块的 `<p><div>` 嵌套）做后处理。
 - **模板版本管理**：当模板内嵌在 Python 源码中时，必须有机制确保磁盘缓存与代码同步。MD5 哈希比较是一个轻量级的方案。
 - **Playwright PDF 的数学渲染**：`wait_for_timeout` 不可靠。用 `wait_for_function` 检测 DOM 中的 `.katex` 元素是确定 KaTeX 渲染完成的唯一可靠方法。
+
+---
+
+## 问题十五：统一文档中间层 AST / Block Schema 构建
+
+### 背景
+
+项目有四个导出器（MD/HTML/PDF/DOCX）和一个翻译器，每个模块都包含`各自的`独立的、重复的文档解析逻辑（公式保护、标题提取、列表解析、表格解析等）。这种 ad-hoc 解析模式导致：
+
+1. **逻辑重复**：`_protect_math`、`_strip_html_tags`、`_parse_content` 等函数在每个导出器中独立实现
+2. **解析不一致**：不同导出器对同一内容的处理结果不同（如 `\begin{aligned}` 在 HTML 中正确处理，在 DOCX 中可能被破坏）
+3. **难以扩展**：添加新的导出格式需要重新实现所有解析逻辑
+4. **Bug 易发**：每个导出器各自维护正则表达式，边角情况难以覆盖
+
+### 解决方案：统一文档中间层 AST
+
+构建了一个三层架构：
+
+```
+输入文本 (Markdown/LaTeX 混合)
+      ↓
+[MarkdownParser] — 解析器层
+      ↓
+Document AST (Block Schema) — 中间层
+      ↓
+[MarkdownRenderer / HTMLRenderer / DocxRenderer] — 渲染器层
+      ↓
+MD / HTML / DOCX / PDF 输出
+```
+
+### 架构说明
+
+#### 1. Block Schema (`backend/app/models/block_schema.py`)
+
+定义了完整的文档块类型层次结构：
+
+**Block 类型**（12 种）：
+| BlockType | 描述 | 关键字段 |
+|-----------|------|---------|
+| `heading` | ATX 标题 | `level` (1-6), `inlines` |
+| `paragraph` | 文本段落 | `inlines` |
+| `code_block` | 围栏代码块 | `content`, `lang` |
+| `math_block` | 显示公式 | `content` (原始 LaTeX) |
+| `image` | 图片块 | `content`, `meta.url` |
+| `bullet_list` / `ordered_list` | 列表 | `children` (list_item) |
+| `list_item` | 列表项 | `inlines` |
+| `blockquote` | 块引用 | `children` (blocks) |
+| `table` | 表格 | `rows`, `aligns` |
+| `thematic_break` | 水平分割线 | - |
+| `html_block` | 原始 HTML 块 | `content` |
+
+**Inline 类型**（10 种）：
+| InlineType | 描述 | 关键字段 |
+|-----------|------|---------|
+| `text` | 纯文本 | `content` |
+| `bold` | **加粗** | `children` (支持嵌套) |
+| `italic` | *斜体* | `children` (支持嵌套) |
+| `underline` | 下划线 | `content` |
+| `strikethrough` | 删除线 | `content` |
+| `code` | `` 行内代码 `` | `content` |
+| `math` | $行内公式$ | `content` |
+| `link` | [链接](url) | `content`, `url`, `children` |
+| `image` | ![图片](url) | `alt`, `url` |
+| `soft_break` | 软换行 | - |
+
+#### 2. MarkdownParser (`backend/app/services/parser/markdown_parser.py`)
+
+行驱动的 Markdown 解析器，按优先级尝试匹配以下块类型：
+
+1. Math Block（`\begin{}...\end{}`、`\[...\]`、`$$...$$`）
+2. Fenced Code Block（` ``` ` / `~~~`）
+3. ATX Heading（`# ` ~ `###### `）
+4. Thematic Break（`---`、`***`、`___`）
+5. Table（GFM 表格）
+6. Blockquote（`> `）
+7. List（`- `、`* `、`+ `、`1. `）
+8. HTML Block（`<p>`、`<div>` 等块级标签）
+9. Paragraph（兜底）
+
+Inline 解析器支持嵌套（如 `**bold with *italic* inside**`），解析优先级：
+- Math > Code > Image > Link > Bold > Italic > Text
+
+#### 3. 格式渲染器
+
+| 渲染器 | 文件 | 输出 |
+|--------|------|------|
+| `MarkdownRenderer` | `ast_renderer.py` | Markdown 文本（无损 round-trip） |
+| `HTMLRenderer` | `html_renderer.py` | 语义化 HTML5（含 KaTeX 标记） |
+| `DocxRenderer` | `docx_renderer.py` | python-docx Document 构建 |
+
+### 重构效果
+
+**删除的重复代码**（估计 300+ 行）：
+- `docx_exporter.py:_parse_content` — 约 120 行自定义行解析逻辑
+- `docx_exporter.py:_add_formatted_runs` — 约 80 行内联格式化解析
+- `html_exporter.py:_protect_math` / `_restore_math_html` — 约 30 行公式正则
+- `html_exporter.py:_markdown_to_html` — 约 10 行，改为 AST 通道
+- `markdown_exporter.py:_protect_math` / `_restore_math` — 约 20 行公式正则
+- `markdown_exporter.py:_strip_html_tags` — 约 20 行 HTML 清理
+
+**新增的核心文件**：
+
+```
+backend/app/models/block_schema.py          — AST 核心类型定义
+backend/app/services/parser/__init__.py     — 包入口
+backend/app/services/parser/markdown_parser.py — 文本 → AST 解析器
+backend/app/services/parser/ast_renderer.py    — AST → Markdown 渲染器
+backend/app/services/parser/html_renderer.py   — AST → HTML 渲染器
+backend/app/services/parser/docx_renderer.py   — AST → DOCX 渲染器
+```
+
+**修改的文件**（重构为 AST 通道）：
+```
+backend/app/services/export/html_exporter.py
+backend/app/services/export/markdown_exporter.py
+backend/app/services/export/docx_exporter.py
+```
+
+### 验证结果
+
+通过 14 项综合测试（含学术论文场景），所有测试通过：
+
+| 测试项 | 验证内容 |
+|--------|---------|
+| Heading | H1~H3 解析和渲染 |
+| Inline | Bold/Italic/Code 正确解析 |
+| Math | $inline$ 和 $$display$$ 及 HTML 标记 |
+| LaTeX Environment | `\begin{equation}` 完整保留 |
+| Lists | 有序/无序列表及嵌套 |
+| Blockquote | 块引用解析 |
+| Code Block | 围栏代码块及语言标识 |
+| Table | GFM 表格及列对齐 |
+| Thematic Break | 分割线 |
+| Nested Formatting | `**bold *italic***` 嵌套解析 |
+| Image/Link | 图片和链接的解析与渲染 |
+| Round-trip | 二次渲染稳定性（第 2 次渲染与第 1 次 100% 一致） |
+| Academic Document | 含公式、表格、列表的实际论文场景 |
+
+### 使用示例
+
+```python
+from app.services.parser import MarkdownParser, render_to_html, render_document
+
+parser = MarkdownParser()
+doc = parser.parse(text)
+
+# 导出为 HTML
+html = render_to_html(doc)
+
+# 导出为 Markdown（可继续编辑）
+markdown = render_document(doc)
+
+# 导出为 DOCX
+from app.services.parser import DocxRenderer
+docx_bytes = DocxRenderer().render(doc, title="Document")
+```
