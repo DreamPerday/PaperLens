@@ -84,11 +84,15 @@ export interface ExportOptions {
   includeOriginal: boolean
   includeTranslation: boolean
   embedImages?: boolean
-  theme?: "light" | "dark" | "academic" | "compact"
+  theme?: "academic" | "modern" | "dark" | "compact"
   pageSize?: "A4" | "Letter"
   fontSize?: number
   includeTOC?: boolean
   watermark?: string
+  watermarkPos?: "center" | "top" | "bottom"
+  coverPage?: boolean
+  subtitle?: string
+  watermarkTiled?: boolean
   codeHighlight?: boolean
   compactMode?: boolean
 }

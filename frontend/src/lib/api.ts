@@ -202,6 +202,7 @@ export const api = {
         font_size?: number;
         include_toc?: boolean;
         watermark?: string;
+        watermark_pos?: string;
       }
     ) =>
       fetchAPI<{
@@ -214,6 +215,38 @@ export const api = {
         method: "POST",
         body: JSON.stringify(options),
       }),
+    download: async (
+      projectId: string,
+      docId: string,
+      options: {
+        format: string
+        embed_images?: boolean
+        include_original?: boolean
+        include_translation?: boolean
+        theme?: string
+        page_size?: string
+        font_size?: number
+        include_toc?: boolean
+        watermark?: string
+        watermark_pos?: string
+      }
+    ) => {
+      const url = `${API_BASE}/api/projects/${projectId}/documents/${docId}/export`
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(options),
+      })
+      if (!res.ok) {
+        const errBody = await res.text()
+        throw new Error(`Export failed: ${res.status} ${errBody}`)
+      }
+      const blob = await res.blob()
+      const contentDisposition = res.headers.get("Content-Disposition") || ""
+      const filenameMatch = contentDisposition.match(/filename="?([^";\n]+)"?/)
+      const filename = filenameMatch ? filenameMatch[1].trim() : `export.${options.format}`
+      return { blob, filename, mime: blob.type }
+    },
     formats: () => 
       fetchAPI<{
         data: {

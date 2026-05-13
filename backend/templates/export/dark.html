@@ -5,29 +5,134 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
     <style>
+        @page {
+            size: {{ page_size }};
+            margin: 2cm;
+            @bottom-center {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 9pt;
+                color: #888;
+            }
+        }
+        
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        
         body {
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            line-height: 1.7;
+            font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+            line-height: 1.8;
             font-size: {{ font_size }}pt;
             color: #e4e4e7;
-            background: #18181b;
+            background: #1a1a1a;
             max-width: 900px;
             margin: 0 auto;
-            padding: 2rem;
+            padding: 2em;
         }
-        h1, h2, h3 { color: #fafafa; }
-        pre { background: #27272a; padding: 1em; border-radius: 8px; }
-        code { background: #3f3f46; padding: 0.2em 0.4em; border-radius: 4px; }
-        blockquote { border-left: 4px solid #8b5cf6; background: #27272a; }
-        table { border-color: #3f3f46; }
-        th { background: #3f3f46; }
+        
+        h1, h2, h3 { color: #f0f0f0; page-break-after: avoid; }
+        h1 { font-size: 1.6em; border-bottom: 2px solid #4a90d9; padding-bottom: 0.3em; }
+        h2 { font-size: 1.3em; border-bottom: 1px solid #333; }
+        
+        p { margin: 0.7em 0; text-indent: 2em; }
+        
+        img { max-width: 100%; display: block; margin: 1em auto; page-break-inside: avoid; }
+        
+        pre {
+            background: #252526;
+            padding: 1em;
+            border-radius: 6px;
+            overflow-x: auto;
+            page-break-inside: avoid;
+            border: 1px solid #333;
+        }
+        
+        code { background: #333; padding: 0.2em 0.4em; border-radius: 3px; font-family: 'Cascadia Code', monospace; }
+        pre code { background: none; padding: 0; }
+        
+        blockquote { border-left: 3px solid #8b5cf6; background: #252526; padding: 0.5em 1em; margin: 1em 0; }
+        
+        .section-title { font-size: 1.4em; color: #4a90d9; border-bottom: 2px solid #4a90d9; padding-bottom: 0.3em; margin-top: 2em; }
+        
+        .toc { page-break-after: always; }
+        
+        .watermark-container {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none;
+            overflow: hidden;
+            z-index: 9999;
+        }
+        
+        .watermark {
+            position: absolute;
+            font-size: 72pt;
+            font-weight: bold;
+            color: rgba(255, 255, 255, 0.03);
+            transform: rotate(-30deg);
+            white-space: nowrap;
+            bottom: 15%;
+            right: -5%;
+        }
+        
+        .math-block { text-align: center; padding: 1em 0; }
+        
+        .table-wrapper {
+            overflow-x: auto;
+            max-width: 100%;
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }
+        
+        table { width: 100%; border-collapse: collapse; margin: 1em 0; table-layout: auto; word-break: break-word; }
+        th, td { border: 1px solid #333; padding: 6px 10px; vertical-align: top; font-size: 0.85em; }
+        th { background: #252526; }
+        
+        hr { border: none; border-top: 1px solid #333; margin: 2em 0; }
     </style>
 </head>
 <body>
-    {{ original_content|safe }}
-    {{ translated_content|safe }}
+    {% if watermark %}
+    <div class="watermark-container"><div class="watermark">{{ watermark }}</div></div>
+    {% endif %}
+    
+    {% if include_toc and toc %}
+    <div class="toc"><h2 class="section-title">目录</h2>{{ toc|safe }}</div>
+    <hr style="border: none; page-break-after: always;">
+    {% endif %}
+    
+    {% if include_original %}
+    <div>
+        <h1 class="section-title">原文 / Original</h1>
+        {{ original_content|safe }}
+    </div>
+    {% endif %}
+    
+    {% if include_translation %}
+    {% if include_original %}<hr style="border: none; page-break-after: always;">{% endif %}
+    <div>
+        <h1 class="section-title">译文 / Translation</h1>
+        {{ translated_content|safe }}
+    </div>
+    {% endif %}
+    
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            if (typeof renderMathInElement !== 'undefined') {
+                renderMathInElement(document.body, {
+                    delimiters: [
+                        {left: "$$", right: "$$", display: true},
+                        {left: "\[", right: "\]", display: true},
+                        {left: "$", right: "$", display: false},
+                        {left: "\(", right: "\)", display: false}
+                    ]
+                });
+            }
+        });
+    </script>
 </body>
 </html>

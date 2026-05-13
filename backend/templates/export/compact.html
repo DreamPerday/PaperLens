@@ -5,15 +5,54 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
     <style>
-        body { font-family: sans-serif; line-height: 1.5; font-size: 12pt; max-width: 100%; margin: 0; padding: 1rem; }
-        h1 { font-size: 1.4em; } h2 { font-size: 1.2em; } h3 { font-size: 1.1em; }
-        pre { font-size: 0.9em; padding: 0.5em; }
-        img { max-width: 100%; }
-        table { font-size: 0.9em; }
+        @page {
+            size: {{ page_size }};
+            margin: 1.5cm;
+            @bottom-center {
+                content: "Page " counter(page);
+                font-size: 9pt;
+                color: #666;
+            }
+        }
+        
+        body {
+            font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            line-height: 1.6;
+            font-size: {{ font_size }}pt;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2em;
+        }
+        
+        h1 { font-size: 1.4em; border-bottom: 1px solid #ccc; padding-bottom: 0.2em; page-break-after: avoid; }
+        h2 { font-size: 1.2em; page-break-after: avoid; }
+        h3 { font-size: 1.1em; page-break-after: avoid; }
+        
+        p { margin: 0.5em 0; text-indent: 2em; }
+        img { max-width: 100%; page-break-inside: avoid; }
+        pre { font-size: 0.85em; padding: 0.5em; background: #f5f5f5; page-break-inside: avoid; }
+        code { font-size: 0.9em; background: #f0f0f0; padding: 0.1em 0.2em; }
+        
+        .section-title { font-size: 1.2em; border-bottom: 1px solid #333; padding-bottom: 0.2em; margin-top: 1.5em; }
+        
+        hr { border: none; border-top: 1px solid #ddd; margin: 1.5em 0; }
     </style>
 </head>
 <body>
-    {{ original_content|safe }}
-    {{ translated_content|safe }}
+    {% if include_original %}
+    <div class="content-section">
+        <h1 class="section-title">原文 / Original</h1>
+        {{ original_content|safe }}
+    </div>
+    {% endif %}
+    
+    {% if include_translation %}
+    {% if include_original %}<hr>{% endif %}
+    <div class="content-section">
+        <h1 class="section-title">译文 / Translation</h1>
+        {{ translated_content|safe }}
+    </div>
+    {% endif %}
 </body>
 </html>

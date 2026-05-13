@@ -9,6 +9,7 @@ from app.services.export import (
 from app.services.storage import storage_service
 from app.utils.parser import DocumentParser
 import os
+import re
 from pathlib import Path
 
 router = APIRouter(prefix="/api/projects", tags=["export"])
@@ -41,6 +42,51 @@ async def _get_document_content(project_id: str, doc_id: str, include_original: 
 
     return original_text, translated_text, doc
 
+IMG_PATTERN_HTML = re.compile(r'(<img[^>]+src="([^"]+)"[^>]*\/?>)', re.IGNORECASE)
+IMG_PATTERN_MD = re.compile(r'(!\[([^\]]*)\]\(([^)]+)\))')
+
+def _enrich_translation_with_images(original_text: str, translated_text: str, format_type: str) -> str:
+    all_images = []
+    for m in IMG_PATTERN_HTML.finditer(original_text):
+        src = m.group(2)
+        alt_match = re.search(r'alt="([^"]*)"', m.group(1))
+        alt = alt_match.group(1) if alt_match else ""
+        all_images.append(("html", src, alt, m.start()))
+    for m in IMG_PATTERN_MD.finditer(original_text):
+        src = m.group(3)
+        alt = m.group(2)
+        all_images.append(("md", src, alt, m.start()))
+    
+    if not all_images:
+        return translated_text
+    
+    all_images.sort(key=lambda x: x[3])
+    
+    t_paras = re.split(r'\n\n+', translated_text)
+    if not t_paras:
+        return translated_text
+    
+    step = max(1, len(t_paras) / max(1, len(all_images)))
+    
+    assigned = {}
+    for j, img in enumerate(all_images):
+        t_idx = min(len(t_paras) - 1, int(j * step))
+        if t_idx not in assigned:
+            assigned[t_idx] = []
+        assigned[t_idx].append(img)
+    
+    parts = []
+    for i, para in enumerate(t_paras):
+        parts.append(para)
+        for img_tuple in assigned.get(i, []):
+            kind, src, alt, _ = img_tuple
+            if format_type == "md":
+                parts.append(f"\n\n![{alt}]({src})\n")
+            else:
+                parts.append(f'\n\n<img src="{src}" alt="{alt}" />\n')
+    
+    return "\n\n".join(parts)
+
 @router.post("/{project_id}/documents/{doc_id}/export")
 async def export_document(
     project_id: str,
@@ -57,13 +103,19 @@ async def export_document(
     font_size = body.get("font_size", 12)
     include_toc = body.get("include_toc", False)
     watermark = body.get("watermark", None)
-
+    watermark_pos = body.get("watermark_pos", "bottom")
+    cover_page = body.get("cover_page", False)
+    watermark_tiled = body.get("watermark_tiled", False)
+    
     if format_type not in exporters:
         raise HTTPException(status_code=400, detail=f"不支持的导出格式: {format_type}")
 
     original_text, translated_text, doc = await _get_document_content(
         project_id, doc_id, include_original, include_translation
     )
+
+    if include_translation and translated_text:
+        translated_text = _enrich_translation_with_images(original_text, translated_text, format_type)
 
     exporter = exporters[format_type]
     title = doc.get("original_name", "Translation").replace(".pdf", "").replace(".docx", "")
@@ -81,7 +133,10 @@ async def export_document(
             page_size=page_size,
             font_size=font_size,
             include_toc=include_toc,
-            watermark=watermark
+            watermark=watermark,
+            watermark_pos=watermark_pos,
+            cover_page=cover_page,
+            watermark_tiled=watermark_tiled
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
@@ -115,7 +170,7 @@ def get_supported_formats():
         "data": {
             "formats": ["md", "html", "pdf", "docx"],
             "options": {
-                "themes": ["academic", "dark", "compact"],
+                "themes": ["academic", "modern", "dark", "compact"],
                 "page_sizes": ["A4", "Letter"],
                 "default_font_size": 12
             }

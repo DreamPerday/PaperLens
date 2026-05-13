@@ -27,6 +27,7 @@ const formatLabels: Record<string, string> = {
 
 const themeLabels: Record<string, string> = {
   academic: "学术风格",
+  modern: "现代风格",
   dark: "深色模式",
   compact: "紧凑模式",
 }
@@ -46,6 +47,9 @@ export function ExportModal({ open, onClose, projectId, docId }: ExportModalProp
   const [fontSize, setFontSize] = useState(12)
   const [includeTOC, setIncludeTOC] = useState(false)
   const [watermark, setWatermark] = useState("")
+  const [watermarkPos, setWatermarkPos] = useState("bottom")
+  const [watermarkTiled, setWatermarkTiled] = useState(false)
+  const [coverPage, setCoverPage] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
   const [progress, setProgress] = useState(0)
@@ -75,6 +79,9 @@ export function ExportModal({ open, onClose, projectId, docId }: ExportModalProp
         font_size: fontSize,
         include_toc: includeTOC,
         watermark: watermark || undefined,
+        watermark_pos: watermarkPos,
+        watermark_tiled: watermarkTiled,
+        cover_page: coverPage,
       }
 
       const startTime = Date.now()
@@ -89,18 +96,32 @@ export function ExportModal({ open, onClose, projectId, docId }: ExportModalProp
         }
       }, 500)
 
-      const response = await api.export.generate(projectId, docId, apiOptions)
-      clearInterval(progressInterval)
-      setProgress(100)
+      const binaryFormats = ["pdf", "docx"]
+      const isBinary = binaryFormats.includes(format)
 
-      const { content, mime, filename } = response.data
-      const blob = new Blob([content], { type: mime })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = filename
-      a.click()
-      URL.revokeObjectURL(url)
+      if (isBinary) {
+        const { blob, filename } = await api.export.download(projectId, docId, apiOptions)
+        clearInterval(progressInterval)
+        setProgress(100)
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = filename
+        a.click()
+        URL.revokeObjectURL(url)
+      } else {
+        const response = await api.export.generate(projectId, docId, apiOptions)
+        clearInterval(progressInterval)
+        setProgress(100)
+        const { content, mime, filename } = response.data
+        const blob = new Blob([content], { type: mime })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = filename
+        a.click()
+        URL.revokeObjectURL(url)
+      }
 
       setTimeout(() => {
         onClose()
@@ -124,6 +145,9 @@ export function ExportModal({ open, onClose, projectId, docId }: ExportModalProp
     setFontSize(12)
     setIncludeTOC(false)
     setWatermark("")
+    setWatermarkPos("bottom")
+    setWatermarkTiled(false)
+    setCoverPage(false)
     setProgress(0)
   }
 
@@ -247,15 +271,58 @@ export function ExportModal({ open, onClose, projectId, docId }: ExportModalProp
         )}
 
         {format === "pdf" && (
-          <div>
-            <label className="block mb-2 text-sm font-medium text-surface-900 dark:text-surface-100">水印文字 (可选)</label>
-            <input
-              type="text"
-              placeholder="输入水印文字，如：内部文档"
-              value={watermark}
-              onChange={(e) => setWatermark(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 text-sm placeholder-surface-400 focus:ring-2 focus:ring-accent-500 focus:border-accent-500"
-            />
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={coverPage}
+                onChange={(e) => setCoverPage(e.target.checked)}
+                className="w-4 h-4 rounded border-surface-300 text-accent-500 focus:ring-accent-500"
+              />
+              <span className="text-sm text-surface-700 dark:text-surface-300">添加封面页</span>
+            </label>
+            <div>
+              <label className="block mb-2 text-sm font-medium text-surface-900 dark:text-surface-100">水印文字 (可选)</label>
+              <input
+                type="text"
+                placeholder="输入水印文字，如：内部文档"
+                value={watermark}
+                onChange={(e) => setWatermark(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 text-sm placeholder-surface-400 focus:ring-2 focus:ring-accent-500 focus:border-accent-500"
+              />
+            </div>
+            {watermark && (
+              <>
+                <div>
+                  <label className="block mb-2 text-sm font-medium text-surface-900 dark:text-surface-100">水印位置</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[{ value: "center", label: "居中" }, { value: "top", label: "顶部" }, { value: "bottom", label: "底部" }].map(pos => (
+                      <button
+                        key={pos.value}
+                        type="button"
+                        onClick={() => setWatermarkPos(pos.value)}
+                        className={`py-1.5 px-2 rounded-md border text-xs transition-colors ${
+                          watermarkPos === pos.value
+                            ? "bg-accent-500 text-white border-accent-500"
+                            : "bg-surface-50 dark:bg-surface-800 text-surface-600 dark:text-surface-300 border-surface-200 dark:border-surface-700 hover:bg-surface-100 dark:hover:bg-surface-700"
+                        }`}
+                      >
+                        {pos.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={watermarkTiled}
+                    onChange={(e) => setWatermarkTiled(e.target.checked)}
+                    className="w-4 h-4 rounded border-surface-300 text-accent-500 focus:ring-accent-500"
+                  />
+                  <span className="text-sm text-surface-700 dark:text-surface-300">平铺水印 (满页重复)</span>
+                </label>
+              </>
+            )}
           </div>
         )}
 

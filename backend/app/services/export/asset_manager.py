@@ -8,12 +8,12 @@ from typing import Dict, Optional, Tuple, List
 from PIL import Image
 
 class AssetManager:
-    def __init__(self, static_dir: str = "storage/static"):
-        self.static_dir = Path(static_dir)
+    def __init__(self, base_path: str = "storage"):
+        self.base_path = Path(base_path)
         self.cache: Dict[str, str] = {}
         self.processed_images: set = set()
         
-    async def collect_images(self, content: str, doc_id: str) -> Tuple[str, List[dict]]:
+    async def collect_images(self, content: str, _doc_id: str) -> Tuple[str, List[dict]]:
         img_pattern = r'<img[^>]+src="([^"]+)"[^>]*\/?>'
         matches = list(re.finditer(img_pattern, content))
         images = []
@@ -29,13 +29,13 @@ class AssetManager:
                 continue
             
             if src.startswith("/"):
-                full_path = self.static_dir / src.lstrip("/")
+                full_path = self.base_path / src.lstrip("/")
             elif src.startswith("http"):
                 images.append({"src": src, "type": "remote", "original": src})
                 self.processed_images.add(src)
                 continue
             else:
-                full_path = self.static_dir / "images" / doc_id / src
+                full_path = self.base_path / src
             
             if full_path.exists():
                 images.append({"src": str(full_path), "type": "local", "original": src})
