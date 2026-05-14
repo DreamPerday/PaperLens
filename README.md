@@ -135,12 +135,17 @@ translation-platform/
 
 ## 启动方式
 
+### 前置要求
+- **Python 3.10+**（推荐 3.11/3.12）
+- **Node.js 18+**
+- **npm**
+
 ### 后端
 ```bash
 cd backend
 pip install -r requirements.txt
-# 配置 DeepSeek API Key
-cp .env.example .env  # 编辑 DEEPSEEK_API_KEY
+# 配置 DeepSeek API Key 和 PaddleOCR Layout Parsing Token
+cp .env.example .env  # 编辑 DEEPSEEK_API_KEY 和 LAYOUT_PARSING_TOKEN
 # 启动
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -149,29 +154,15 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```bash
 cd frontend
 npm install
-# 配置后端端口 (可选，默认 8000)
+# 配置后端端口 (可选，默认 8000，需与后端端口一致)
 echo "NEXT_PUBLIC_API_PORT=8000" > .env.local
+# 安装 Playwright Chromium（PDF 导出必需）
+npx playwright install chromium
 # 启动
 npm run dev  # http://localhost:3000
 ```
 
-### 环境变量
-
-**后端** (`backend/.env`)：
-```env
-DEEPSEEK_API_KEY=your-api-key-here
-DEEPSEEK_MODEL=deepseek-v4-flash
-CORS_ORIGINS=http://localhost:3000,http://localhost:3001
-STORAGE_PATH=./storage
-```
-
-**前端** (`frontend/.env.local`)：
-```env
-NEXT_PUBLIC_API_PORT=8000
-```
-
-### API 代理
-前端 `next.config.js` 配置了 `/api/*` → `http://localhost:8000` 的 rewrite，开发时直接访问 `localhost:3000` 即可。
+前端 `next.config.js` 会自动将 `/api/*` 和 `/static/*` 请求代理到后端（通过 `NEXT_PUBLIC_API_PORT` 指定端口），开发时直接访问 `localhost:3000` 即可。
 
 ## API 接口总览
 
@@ -210,12 +201,13 @@ CSS 自定义属性实现 Design Token，支持亮色/暗色一键切换：
 ## 注意事项
 
 1. **DeepSeek API Key**：需要在 `.env` 中配置有效的 API Key，DeepSeek 模型名为 `deepseek-v4-flash`
-2. **存储路径**：后端运行时会自动创建 `storage/` 目录
-3. **PDF 导出**：需要安装 Playwright Chromium (`playwright install chromium`)
-4. **KaTeX SSR**：依赖 `frontend/node_modules/katex`，运行前端 `npm install` 后自动安装
-5. **端口配置**：前端通过 `NEXT_PUBLIC_API_PORT` 配置后端端口
-6. **CORS**：后端已配置 CORS，允许前端跨域访问
-7. **FFmpeg** (可选)：视频/音频处理需要配置 FFmpeg 路径
+2. **PaddleOCR Layout Parsing Token**：文档解析依赖 PaddleOCR 版面分析 API，需前往 [AI Studio PaddleOCR](https://aistudio.baidu.com/paddleocr) 获取 Token 并配置 `LAYOUT_PARSING_TOKEN`
+3. **存储路径**：后端运行时会自动创建 `storage/` 目录
+4. **PDF 导出**：需要安装 Playwright Chromium (`playwright install chromium`)
+5. **KaTeX SSR**：依赖 `frontend/node_modules/katex`，运行前端 `npm install` 后自动安装
+6. **端口配置**：前端通过 `NEXT_PUBLIC_API_PORT` 配置后端端口
+7. **CORS**：后端已配置 CORS，允许前端跨域访问
+8. **FFmpeg** (可选)：视频/音频处理需要配置 FFmpeg 路径
 
 ## 致谢
 
