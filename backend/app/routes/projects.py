@@ -233,49 +233,62 @@ def translate_document_endpoint(project_id: str, doc_id: str, body: TranslationR
                     on_chunk_complete=on_chunk_complete
                 )
 
-                if result["success"] or (result.get("text") and len(result["text"]) > len(text) * 0.3):
-                    job["status"] = "completed"
-                    job["progress"] = 100
-                    job["result"] = {"text": result["text"], "tokens": result["tokens"]}
-                    logger.info(f"翻译完成: job={job_id}, tokens={result['tokens']}, total_len={len(result['text'])}")
-                    storage_service.save_translation(
-                        project_id, doc_id,
-                        content=result["text"],
-                        tokens_used=result["tokens"],
-                    )
-                    storage_service.update_document(project_id, doc_id, {"status": "completed"})
-                    try:
-                        para_count = len(split_paragraphs(text))
-                        save_token_history(project_id, doc_id, doc.get("original_name", doc_id), result["tokens"], para_count)
-                    except Exception as e:
-                        logger.warning(f"保存Token历史记录失败: {e}")
-
-                    ws_list = _websocket_clients.get(job_id, [])
-                    logger.info(f"发送done消息: job={job_id}, ws_clients={len(ws_list)}")
-                    for ws in ws_list:
+                try:
+                    if result["success"] or (result.get("text") and len(result["text"]) > len(text) * 0.3):
+                        job["status"] = "completed"
+                        job["progress"] = 100
+                        job["result"] = {"text": result["text"], "tokens": result["tokens"]}
+                        logger.info(f"翻译完成: job={job_id}, tokens={result['tokens']}, total_len={len(result['text'])}")
+                        storage_service.save_translation(
+                            project_id, doc_id,
+                            content=result["text"],
+                            tokens_used=result["tokens"],
+                        )
+                        storage_service.update_document(project_id, doc_id, {"status": "completed"})
                         try:
-                            await ws.send_json({
-                                "type": "done",
-                                "progress": 100,
-                                "result": {"text": result["text"], "tokens": result["tokens"]},
-                            })
+                            para_count = len(split_paragraphs(text))
+                            save_token_history(
+                                project_id, doc_id, doc.get("original_name", doc_id),
+                                result["tokens"], para_count,
+                                prompt_tokens=result.get("prompt_tokens", 0),
+                                completion_tokens=result.get("completion_tokens", 0),
+                                cached_tokens=result.get("cached_tokens", 0),
+                            )
                         except Exception as e:
-                            logger.warning(f"ws done发送失败: {e}")
-                else:
-                    job["status"] = "failed"
-                    job["error"] = result.get("error", "翻译失败")
-                    logger.error(f"翻译失败: job={job_id}, error={job['error']}")
-                    storage_service.update_document(project_id, doc_id, {"status": "failed"})
+                            logger.warning(f"保存Token历史记录失败: {e}")
 
-                    ws_list = _websocket_clients.get(job_id, [])
-                    for ws in ws_list:
-                        try:
-                            await ws.send_json({
-                                "type": "error",
-                                "message": result.get("error", "翻译失败"),
-                            })
-                        except Exception:
-                            pass
+                        ws_list = _websocket_clients.get(job_id, [])
+                        logger.info(f"发送done消息: job={job_id}, ws_clients={len(ws_list)}")
+                        for ws in ws_list:
+                            try:
+                                await ws.send_json({
+                                    "type": "done",
+                                    "progress": 100,
+                                    "result": {"text": result["text"], "tokens": result["tokens"]},
+                                })
+                            except Exception as e:
+                                logger.warning(f"ws done发送失败: {e}")
+                    else:
+                        job["status"] = "failed"
+                        job["error"] = result.get("error", "翻译失败")
+                        logger.error(f"翻译失败: job={job_id}, error={job['error']}")
+                        storage_service.update_document(project_id, doc_id, {"status": "failed"})
+
+                        ws_list = _websocket_clients.get(job_id, [])
+                        for ws in ws_list:
+                            try:
+                                await ws.send_json({
+                                    "type": "error",
+                                    "message": result.get("error", "翻译失败"),
+                                })
+                            except Exception:
+                                pass
+                except Exception as e:
+                    logger.error(f"翻译后处理异常: job={job_id}, error={e}", exc_info=True)
+                    job["status"] = "failed"
+                    job["error"] = f"后处理异常: {str(e)}"
+                    job["result"] = {"text": result.get("text", ""), "tokens": result.get("tokens", 0)}
+                    storage_service.update_document(project_id, doc_id, {"status": "failed"})
 
             def _run_async():
                 loop = asyncio.new_event_loop()
@@ -529,22 +542,39 @@ def delete_orphan_files():
 
 @router.get("/token-stats")
 def get_token_stats():
+    from app.services.pricing import calculate_cost
+
     projects = storage_service.list_projects()
     project_breakdown = []
     total_tokens = 0
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_cached_tokens = 0
 
     for project in projects:
         pid = project["id"]
         translations = storage_service.list_translations(pid)
         proj_tokens = sum(t.get("tokens_used", 0) for t in translations)
+        proj_prompt = sum(t.get("prompt_tokens", 0) for t in translations)
+        proj_completion = sum(t.get("completion_tokens", 0) for t in translations)
+        proj_cached = sum(t.get("cached_tokens", 0) for t in translations)
         total_tokens += proj_tokens
+        total_prompt_tokens += proj_prompt
+        total_completion_tokens += proj_completion
+        total_cached_tokens += proj_cached
         project_breakdown.append({
             "project_id": pid,
             "project_name": project["name"],
             "document_count": len(storage_service.list_documents(pid)),
             "translation_count": len(translations),
             "tokens_used": proj_tokens,
+            "prompt_tokens": proj_prompt,
+            "completion_tokens": proj_completion,
+            "cached_tokens": proj_cached,
+            "cost": calculate_cost(proj_prompt, proj_completion, proj_cached),
         })
+
+    total_cost = calculate_cost(total_prompt_tokens, total_completion_tokens, total_cached_tokens)
 
     user_file = storage_service.base / "user_tokens.json"
     user_tokens = {}
@@ -557,6 +587,10 @@ def get_token_stats():
     return {
         "data": {
             "total_tokens": total_tokens,
+            "total_prompt_tokens": total_prompt_tokens,
+            "total_completion_tokens": total_completion_tokens,
+            "total_cached_tokens": total_cached_tokens,
+            "total_cost": total_cost,
             "project_breakdown": project_breakdown,
             "user_tokens": user_tokens,
         }
@@ -565,22 +599,33 @@ def get_token_stats():
 @router.get("/token-history")
 def get_token_history_endpoint(days: int = Query(30, ge=1, le=365)):
     records = get_token_history(days)
-    daily_summary = defaultdict(lambda: {"tokens": 0, "count": 0})
+    daily_summary = defaultdict(lambda: {"tokens": 0, "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "count": 0})
     for r in records:
         day = r["timestamp"][:10]
         daily_summary[day]["tokens"] += r["tokens_used"]
+        daily_summary[day]["prompt_tokens"] += r.get("prompt_tokens", 0)
+        daily_summary[day]["completion_tokens"] += r.get("completion_tokens", 0)
+        daily_summary[day]["cached_tokens"] += r.get("cached_tokens", 0)
         daily_summary[day]["count"] += 1
 
-    daily = [{"date": k, "tokens": v["tokens"], "count": v["count"]}
+    daily = [{"date": k, "tokens": v["tokens"], "prompt_tokens": v["prompt_tokens"],
+              "completion_tokens": v["completion_tokens"], "cached_tokens": v["cached_tokens"],
+              "count": v["count"]}
              for k, v in sorted(daily_summary.items())]
 
     total_history_tokens = sum(r["tokens_used"] for r in records)
+    total_history_prompt = sum(r.get("prompt_tokens", 0) for r in records)
+    total_history_completion = sum(r.get("completion_tokens", 0) for r in records)
+    total_history_cached = sum(r.get("cached_tokens", 0) for r in records)
     return {
         "data": {
             "records": records,
             "daily_summary": daily,
             "total_records": len(records),
             "total_tokens": total_history_tokens,
+            "total_prompt_tokens": total_history_prompt,
+            "total_completion_tokens": total_history_completion,
+            "total_cached_tokens": total_history_cached,
             "days": days,
         }
     }

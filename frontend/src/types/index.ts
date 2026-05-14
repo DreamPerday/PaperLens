@@ -42,7 +42,8 @@ export interface TranslationResult {
 export type TranslationStatus = "pending" | "queued" | "translating" | "completed" | "error"
 
 export interface TokenUsage {
-  input: number
+  inputCacheHit: number
+  inputCacheMiss: number
   output: number
   total: number
   cost: number

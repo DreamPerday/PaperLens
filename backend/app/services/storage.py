@@ -154,7 +154,9 @@ class StorageService:
         return None
 
     def save_translation(self, project_id: str, document_id: str,
-                         content: str, tokens_used: int = 0) -> dict:
+                         content: str, tokens_used: int = 0,
+                         prompt_tokens: int = 0, completion_tokens: int = 0,
+                         cached_tokens: int = 0) -> dict:
         trans_file = self._get_trans_file(project_id)
         translations = self._read_json(trans_file)
         now = datetime.now().isoformat()
@@ -167,6 +169,9 @@ class StorageService:
             "progress": 1.0,
             "content": content,
             "tokens_used": tokens_used,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cached_tokens": cached_tokens,
             "created_at": now,
             "completed_at": now,
         }
@@ -184,7 +189,10 @@ class StorageService:
         project = self.get_project(project_id)
         if project:
             self.update_project(project_id, {
-                "total_tokens": project.get("total_tokens", 0) + tokens_used
+                "total_tokens": project.get("total_tokens", 0) + tokens_used,
+                "total_prompt_tokens": project.get("total_prompt_tokens", 0) + prompt_tokens,
+                "total_completion_tokens": project.get("total_completion_tokens", 0) + completion_tokens,
+                "total_cached_tokens": project.get("total_cached_tokens", 0) + cached_tokens,
             })
         return translation
 

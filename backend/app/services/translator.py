@@ -441,9 +441,18 @@ async def _translate_single_chunk(
                     translated = _restore_formulas(translated, formulas)
                     usage = result.get("usage", {})
                     tokens = usage.get("total_tokens", len(chunk_text) // 2)
+                    prompt_tokens = usage.get("prompt_tokens", 0)
+                    completion_tokens = usage.get("completion_tokens", 0)
+                    cached_tokens = (
+                        usage.get("prompt_tokens_details", {})
+                        .get("cached_tokens", 0)
+                    )
                     return {
                         "text": translated,
                         "tokens": tokens,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "cached_tokens": cached_tokens,
                         "success": True,
                         "index": chunk_idx,
                     }
@@ -713,11 +722,17 @@ async def translate_document_async(
 
     full_text = "\n\n".join(r.get("text", "") for r in results)
     total_tokens = sum(r.get("tokens", 0) for r in results)
+    total_prompt_tokens = sum(r.get("prompt_tokens", 0) for r in results)
+    total_completion_tokens = sum(r.get("completion_tokens", 0) for r in results)
+    total_cached_tokens = sum(r.get("cached_tokens", 0) for r in results)
     all_success = all(r.get("success", False) for r in results)
 
     return {
         "text": full_text,
         "tokens": total_tokens,
+        "prompt_tokens": total_prompt_tokens,
+        "completion_tokens": total_completion_tokens,
+        "cached_tokens": total_cached_tokens,
         "success": all_success,
         "validation": {
             "total_issues": total_issues,
@@ -727,7 +742,8 @@ async def translate_document_async(
     }
 
 
-def save_token_history(project_id: str, doc_id: str, doc_name: str, tokens_used: int, paragraph_count: int):
+def save_token_history(project_id: str, doc_id: str, doc_name: str, tokens_used: int, paragraph_count: int,
+                       prompt_tokens: int = 0, completion_tokens: int = 0, cached_tokens: int = 0):
     from app.services.storage import storage_service
     history_dir = storage_service.base / "token_history"
     history_dir.mkdir(exist_ok=True)
@@ -739,6 +755,9 @@ def save_token_history(project_id: str, doc_id: str, doc_name: str, tokens_used:
         "doc_id": doc_id,
         "doc_name": doc_name,
         "tokens_used": tokens_used,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "cached_tokens": cached_tokens,
         "paragraph_count": paragraph_count,
     }
     with open(history_file, "a", encoding="utf-8") as f:

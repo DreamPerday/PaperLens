@@ -284,7 +284,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           translatedContent: content.translated_text || "",
           progress: hasTranslation ? 100 : 0,
           status: hasTranslation ? "completed" : "pending",
-          tokenUsage: { input: 0, output: 0, total: 0, cost: 0 },
+          tokenUsage: { inputCacheHit: 0, inputCacheMiss: 0, output: 0, total: 0, cost: 0 },
           cached: hasTranslation,
           createdAt: new Date().toISOString(),
         },
@@ -377,7 +377,9 @@ export const useAppStore = create<AppState>((set, get) => ({
                 } : null,
               }))
             }
-          } catch {}
+          } catch (e) {
+            console.error("[STORE] recovery poll error:", e)
+          }
         }, 2000)
       } else if (job.status === "completed" && job.result) {
         get().setTranslatingFileId(null)
@@ -412,8 +414,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     if (state.translatingFileId) {
-      console.warn(`[STORE] Translation already in progress for file: ${state.translatingFileId}, ignoring duplicate call`)
-      return
+      console.warn(`[STORE] Force restarting translation: was=${state.translatingFileId}, new=${docId}`)
+      get().setTranslatingFileId(null)
+      set((s) => ({
+        translationResult: s.translationResult ? {
+          ...s.translationResult,
+          status: "error",
+          progress: 0,
+        } : null,
+      }))
     }
 
     console.log(`[STORE] Starting translation: project=${projectId}, doc=${docId}`)
@@ -426,6 +435,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     let ws: WebSocket | null = null
     let pollInterval: ReturnType<typeof setInterval> | null = null
     let done = false
+    let lastProgressTime = Date.now()
+    let usePolling = false
 
     const imgTagRegex = /<img[^>]*\/?>/gi
     const originalImgs: { tag: string; src: string }[] = []
@@ -498,6 +509,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       function startPolling() {
         if (done) return
+        usePolling = true
+        console.log("[STORE] Switched to polling mode")
         pollInterval = setInterval(async () => {
           if (done) { clearInterval(pollInterval!); return }
           try {
@@ -511,6 +524,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                 status: job.status === "translating" ? "translating" : job.status === "completed" ? "completed" : "error",
               } : null,
             }))
+            lastProgressTime = Date.now()
 
             if (job.status === "completed" && job.result) {
               finishWith(job.result.text, job.result.tokens, "completed")
@@ -519,7 +533,9 @@ export const useAppStore = create<AppState>((set, get) => ({
               finishWith("", 0, "error")
               console.error("[STORE] Translation failed")
             }
-          } catch {}
+          } catch (e) {
+            console.error("[STORE] translation poll error:", e)
+          }
         }, 2000)
       }
 
@@ -541,6 +557,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             if (msg.type === "chunk") {
               chunkMap.set(msg.index, msg.content)
               const partialContent = buildContent()
+              lastProgressTime = Date.now()
               set((s) => ({
                 translationResult: s.translationResult ? {
                   ...s.translationResult,
@@ -558,7 +575,9 @@ export const useAppStore = create<AppState>((set, get) => ({
             } else if (msg.type === "status") {
               console.log(`[STORE] WS status: ${msg.status} progress=${msg.progress}`)
             }
-          } catch {}
+          } catch (e) {
+            console.error("[STORE] WS message parse error:", e)
+          }
         }
 
         ws.onerror = () => {
@@ -576,6 +595,26 @@ export const useAppStore = create<AppState>((set, get) => ({
       } catch {
       startPolling()
     }
+
+    const WATCHDOG_TIMEOUT = 30_000
+    const watchdogInterval = setInterval(() => {
+      if (done) { clearInterval(watchdogInterval); return }
+      const stallDuration = Date.now() - lastProgressTime
+      if (stallDuration > WATCHDOG_TIMEOUT) {
+        console.warn(`[STORE] WATCHDOG: Progress stalled for ${Math.round(stallDuration / 1000)}s, usePolling=${usePolling}`)
+        if (!usePolling && ws) {
+          console.warn("[STORE] WATCHDOG: Closing stale WebSocket, falling back to polling")
+          try { ws.close() } catch {}
+          ws = null
+          startPolling()
+        } else {
+          console.warn("[STORE] WATCHDOG: Polling also stalled, marking as failed")
+          const partial = buildContent()
+          finishWith(partial || originalText, 0, "error")
+          clearInterval(watchdogInterval)
+        }
+      }
+    }, 5_000)
 
     } catch (err) {
       console.error(`[STORE] Translation start failed:`, err)
@@ -604,9 +643,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   apiStats: {
     totalRequests: 0,
-    totalTokens: { input: 0, output: 0, total: 0, cost: 0 },
+    totalTokens: { inputCacheHit: 0, inputCacheMiss: 0, output: 0, total: 0, cost: 0 },
     todayRequests: 0,
-    todayTokens: { input: 0, output: 0, total: 0, cost: 0 },
+    todayTokens: { inputCacheHit: 0, inputCacheMiss: 0, output: 0, total: 0, cost: 0 },
   },
   updateApiStats: (stats) => set({ apiStats: stats }),
 
@@ -617,17 +656,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       console.log(`[STORE] API stats raw response:`, res)
 
       const rawData: any = (res as any).data || res
+      const promptTokens = rawData.prompt_tokens || 0
+      const completionTokens = rawData.completion_tokens || 0
+      const cachedTokens = rawData.cached_tokens || 0
+      const totalTokens = rawData.tokens_used || (promptTokens + completionTokens) || 0
+      const cost = typeof rawData.cost === "number" ? rawData.cost : 0
       const newStats: ApiStats = {
         totalRequests: rawData.documents || rawData.totalRequests || 0,
         totalTokens: {
-          input: rawData.tokens_used || rawData.totalTokens?.input || 0,
-          output: 0,
-          total: rawData.tokens_used || rawData.totalTokens?.total || 0,
-          cost: 0,
+          inputCacheHit: cachedTokens,
+          inputCacheMiss: Math.max(0, promptTokens - cachedTokens),
+          output: completionTokens,
+          total: totalTokens,
+          cost,
         },
         todayRequests: rawData.todayRequests || 0,
         todayTokens: {
-          input: 0,
+          inputCacheHit: 0,
+          inputCacheMiss: 0,
           output: 0,
           total: 0,
           cost: 0,

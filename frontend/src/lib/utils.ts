@@ -38,7 +38,7 @@ export function formatTokenCount(count: number): string {
 }
 
 export function formatCost(cost: number): string {
-  return `$${cost.toFixed(4)}`
+  return `¥${cost.toFixed(4)}`
 }
 
 export function generateId(): string {
