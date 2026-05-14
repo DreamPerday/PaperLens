@@ -9,7 +9,7 @@ import { StatusBar } from "@/components/layout/StatusBar"
 import { DualPaneReader } from "@/components/reader"
 import { SettingsPanel } from "@/components/settings"
 import { FileUploadDialog } from "@/components/upload"
-import { GlossaryDialog, TokenStats, BatchDialog, SearchDialog, CleanupDialog, TokenUsageDialog } from "@/components/translation"
+import { GlossaryDialog, BatchDialog, SearchDialog, CleanupDialog, TokenUsageDialog } from "@/components/translation"
 import { cn } from "@/lib/utils"
 
 export default function Home() {
