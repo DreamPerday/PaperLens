@@ -65,3 +65,9 @@ token_history/
 # ======================
 .docker/
 docker-compose.override.yml
+
+# ======================
+# Personal / IDE / Docs
+# ======================
+.trae/
+GIT_GUIDE.md
