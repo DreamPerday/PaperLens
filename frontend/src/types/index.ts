@@ -25,7 +25,7 @@ export interface PaperFile {
 
 export type FileType = "pdf" | "docx" | "markdown" | "latex" | "html"
 
-export type FileStatus = "uploaded" | "processing" | "translated" | "error"
+export type FileStatus = "uploaded" | "processing" | "translated" | "translating" | "completed" | "error" | "failed"
 
 export interface TranslationResult {
   id: string

@@ -173,6 +173,28 @@ def _restore_formatting(text: str, markers: list) -> str:
     return text
 
 
+HTML_TAG_RE = re.compile(r'(<[^>]*>)')
+
+
+def _protect_html_tags(text: str) -> tuple:
+    """Replace HTML tags with placeholders to prevent format protection regexes
+    from matching inside HTML attributes and corrupting structure."""
+    markers: list[str] = []
+
+    def _replace(m):
+        markers.append(m.group(1))
+        return f'[HTML_{len(markers) - 1}]'
+
+    text = HTML_TAG_RE.sub(_replace, text)
+    return text, markers
+
+
+def _restore_html_tags(text: str, markers: list) -> str:
+    for i, m in enumerate(markers):
+        text = text.replace(f'[HTML_{i}]', m)
+    return text
+
+
 def _math_density(text: str) -> float:
     blocks = len(FORMULA_BLOCK_RE.findall(text))
     inlines = len(FORMULA_INLINE_RE.findall(text))
@@ -411,6 +433,7 @@ async def _translate_single_chunk(
         api_url = f"{settings.deepseek_base_url}/v1/chat/completions"
 
         protected_text, formulas = _protect_formulas(chunk_text)
+        protected_text, html_tags = _protect_html_tags(protected_text)
         protected_text, format_markers = _protect_formatting(protected_text)
         prompt = TRANSLATE_PROMPT.format(text=protected_text)
 
@@ -445,6 +468,7 @@ async def _translate_single_chunk(
                         '', translated.strip()
                     )
                     translated = _restore_formatting(translated, format_markers)
+                    translated = _restore_html_tags(translated, html_tags)
                     translated = _restore_formulas(translated, formulas)
                     usage = result.get("usage", {})
                     tokens = usage.get("total_tokens", len(chunk_text) // 2)

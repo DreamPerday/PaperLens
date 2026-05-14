@@ -106,7 +106,7 @@ interface AppState {
 
   tokenBreakdown: Array<{
     project_id: string; project_name: string; document_count: number
-    translation_count: number; tokens_used: number; cost: number
+    translation_count: number; tokens_used: number; cost?: number
   }> | null
   totalTokenUsage: number
   totalTokenCost: number
@@ -232,10 +232,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (savedTranslatingId && savedTime) {
         const elapsed = Date.now() - parseInt(savedTime)
         if (elapsed < 3600000) {
-          const stillExists = projectsWithFiles.some((p: any) =>
-            (p.files || []).some((f: any) => f.id === savedTranslatingId)
-          )
-          if (stillExists) {
+          const foundFile = projectsWithFiles.reduce<PaperFile | null>((acc, p: any) => {
+            if (acc) return acc
+            return (p.files || []).find((f: any) => f.id === savedTranslatingId) || null
+          }, null)
+          if (foundFile && foundFile.status !== "completed") {
             set({ translatingFileId: savedTranslatingId })
           } else {
             localStorage.removeItem("translating_file_id")
@@ -274,6 +275,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       })
 
       const hasTranslation = content.translated_text && content.translated_text.length > 0
+      const isRecovering = get().translatingFileId === id
 
       set({
         documentContent: content,
@@ -283,15 +285,15 @@ export const useAppStore = create<AppState>((set, get) => ({
           fileId: id,
           originalContent: content.original_text || "",
           translatedContent: content.translated_text || "",
-          progress: hasTranslation ? 100 : 0,
-          status: hasTranslation ? "completed" : "pending",
+          progress: hasTranslation && !isRecovering ? 100 : 0,
+          status: isRecovering ? "translating" : (hasTranslation ? "completed" : "pending"),
           tokenUsage: { inputCacheHit: 0, inputCacheMiss: 0, output: 0, total: 0, cost: 0 },
           cached: hasTranslation,
           createdAt: new Date().toISOString(),
         },
       })
 
-      if (get().translatingFileId === id) {
+      if (isRecovering) {
         get().recoverTranslation(projectId, id)
       }
     } catch (err) {
@@ -321,12 +323,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (!job) return
 
       if (job.status === "translating") {
+        const currentResult = get().translationResult
+        const hasContent = currentResult?.translatedContent && currentResult.translatedContent.length > 100
         set((s) => ({
           translationResult: s.translationResult ? {
             ...s.translationResult,
+            progress: hasContent ? Math.max(s.translationResult?.progress || 0, job.progress || 0) : (job.progress || 0),
+            status: "translating",
+          } : {
+            id: `trans-${docId}`,
+            fileId: docId,
+            originalContent: "",
+            translatedContent: "",
             progress: job.progress || 0,
             status: "translating",
-          } : null,
+            tokenUsage: { inputCacheHit: 0, inputCacheMiss: 0, output: 0, total: 0, cost: 0 },
+            cached: false,
+            createdAt: new Date().toISOString(),
+          },
         }))
 
         const pollInterval = setInterval(async () => {
