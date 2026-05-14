@@ -320,6 +320,13 @@ def get_translation_status(project_id: str, doc_id: str):
         if not doc:
             raise HTTPException(status_code=404, detail="文档不存在")
         status = doc.get("status", "uploaded")
+        if status == "translating":
+            logger.warning(
+                f"状态端点: job_id={job_id} 无活跃翻译任务，但文档状态为translating。"
+                f"说明翻译已放弃，自动标记为failed"
+            )
+            storage_service.update_document(project_id, doc_id, {"status": "failed"})
+            status = "failed"
         translation = storage_service.get_translation(project_id, doc_id)
         job = {
             "job_id": job_id,

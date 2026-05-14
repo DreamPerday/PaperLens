@@ -34,6 +34,7 @@ interface AppState {
   translationResult: TranslationResult | null
   setTranslationResult: (result: TranslationResult | null) => void
   recoverTranslation: (projectId: string, docId: string) => Promise<void>
+  cancelTranslation: () => void
   startTranslation: (docId: string) => Promise<void>
 
   readerSettings: ReaderSettings
@@ -121,12 +122,12 @@ interface AppState {
       doc_name: string; tokens_used: number; paragraph_count: number
       prompt_tokens?: number; completion_tokens?: number; cached_tokens?: number
     }>
-    daily_summary: Array<{ date: string; tokens: number; prompt_tokens: number; completion_tokens: number; cached_tokens: number; count: number }>
+    daily_summary: Array<{ date: string; tokens: number; prompt_tokens?: number; completion_tokens?: number; cached_tokens?: number; count: number }>
     total_records: number
     total_tokens: number
-    total_prompt_tokens: number
-    total_completion_tokens: number
-    total_cached_tokens: number
+    total_prompt_tokens?: number
+    total_completion_tokens?: number
+    total_cached_tokens?: number
   } | null
   tokenHistoryDays: number
   tokenHistoryLoading: boolean
@@ -347,12 +348,33 @@ export const useAppStore = create<AppState>((set, get) => ({
           },
         }))
 
+        const MAX_POLL_COUNT = 30
+        let pollCount = 0
+        let lastRecoveryProgress = job.progress || 0
+        let lastRecoveryTime = Date.now()
+
         const pollInterval = setInterval(async () => {
           const current = get()
           if (current.translatingFileId !== docId) {
             clearInterval(pollInterval)
             return
           }
+          pollCount += 1
+
+          if (pollCount > MAX_POLL_COUNT) {
+            console.warn(`[STORE] recovery polling exceeded ${MAX_POLL_COUNT * 2}s, marking as failed`)
+            clearInterval(pollInterval)
+            get().setTranslatingFileId(null)
+            set((s) => ({
+              translationResult: s.translationResult ? {
+                ...s.translationResult,
+                status: "error",
+                progress: 0,
+              } : null,
+            }))
+            return
+          }
+
           try {
             const sr = await api.translation.status(projectId, docId)
             const j = sr.data
@@ -378,7 +400,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                 } : null,
               }))
               console.log("[STORE] Translation recovered via polling")
-            } else if (j.status === "failed") {
+            } else if (j.status === "failed" || j.status === "error") {
               clearInterval(pollInterval)
               get().setTranslatingFileId(null)
               set((s) => ({
@@ -389,10 +411,29 @@ export const useAppStore = create<AppState>((set, get) => ({
                 } : null,
               }))
             } else if (j.status === "translating") {
+              const newProgress = j.progress || 0
+              if (newProgress > lastRecoveryProgress) {
+                lastRecoveryProgress = newProgress
+                lastRecoveryTime = Date.now()
+              }
+              const stallSec = Math.round((Date.now() - lastRecoveryTime) / 1000)
+              if (stallSec > 30 && pollCount > 5) {
+                console.warn(`[STORE] recovery watchdog: stalled ${stallSec}s, marking as failed`)
+                clearInterval(pollInterval)
+                get().setTranslatingFileId(null)
+                set((s) => ({
+                  translationResult: s.translationResult ? {
+                    ...s.translationResult,
+                    status: "error",
+                    progress: 0,
+                  } : null,
+                }))
+                return
+              }
               set((s) => ({
                 translationResult: s.translationResult ? {
                   ...s.translationResult,
-                  progress: j.progress || 0,
+                  progress: newProgress,
                   status: "translating",
                 } : null,
               }))
@@ -424,6 +465,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (err) {
       console.warn(`[STORE] Translation recovery failed:`, err)
     }
+  },
+
+  cancelTranslation: () => {
+    const state = get()
+    if (!state.translatingFileId) return
+    console.log(`[STORE] User cancelled translation: ${state.translatingFileId}`)
+    get().setTranslatingFileId(null)
+    set((s) => ({
+      translationResult: s.translationResult ? {
+        ...s.translationResult,
+        status: "error",
+        progress: 0,
+      } : null,
+    }))
   },
 
   startTranslation: async (docId) => {

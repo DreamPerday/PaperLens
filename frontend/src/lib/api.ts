@@ -163,9 +163,12 @@ export const api = {
             tokens_used: number
             paragraph_count: number
           }>
-          daily_summary: Array<{ date: string; tokens: number; count: number }>
+          daily_summary: Array<{ date: string; tokens: number; prompt_tokens?: number; completion_tokens?: number; cached_tokens?: number; count: number }>
           total_records: number
           total_tokens: number
+          total_prompt_tokens?: number
+          total_completion_tokens?: number
+          total_cached_tokens?: number
           days: number
         }
       }>(`/api/projects/token-history?days=${days}`),

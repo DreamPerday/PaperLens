@@ -33,6 +33,7 @@ export function DualPaneReader() {
   const documentError = useAppStore((s) => s.documentError)
   const documentContent = useAppStore((s) => s.documentContent)
   const startTranslation = useAppStore((s) => s.startTranslation)
+  const cancelTranslation = useAppStore((s) => s.cancelTranslation)
   const translatingFileId = useAppStore((s) => s.translatingFileId)
   const mobileTab = useAppStore((s) => s.mobileTab)
   const setMobileTab = useAppStore((s) => s.setMobileTab)
@@ -73,6 +74,10 @@ export function DualPaneReader() {
     if (isTranslating) return
     await startTranslation(activeFileId)
   }, [activeFileId, startTranslation, isTranslating])
+
+  const handleCancelTranslation = useCallback(() => {
+    cancelTranslation()
+  }, [cancelTranslation])
 
   const handleExport = useCallback(() => {
     setExportModalOpen(true)
@@ -295,8 +300,16 @@ export function DualPaneReader() {
           <div className="flex items-center justify-between text-xs text-surface-500 mb-1.5">
             <div className="flex items-center gap-2">
               <Loader2 className="w-3.5 h-3.5 animate-spin text-accent-500" />
-              <span>AI 正在翻译...</span>
+              <span>AI 正在翻译... {Math.min(100, translationResult?.progress || 0)}%</span>
             </div>
+            <button
+              onClick={handleCancelTranslation}
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors text-xs font-medium"
+              title="取消翻译"
+            >
+              <X className="w-3 h-3" />
+              取消
+            </button>
           </div>
           <div className="relative w-full h-1 rounded-full bg-surface-200 dark:bg-surface-700 overflow-hidden">
             <div
@@ -414,6 +427,13 @@ export function DualPaneReader() {
                   <>
                     <span className="badge-primary text-xs">翻译中</span>
                     <span className="text-xs text-surface-400">{Math.min(100, translationResult?.progress || 0)}%</span>
+                    <div className="flex-1" />
+                    <button
+                      onClick={handleCancelTranslation}
+                      className="text-xs text-rose-500 hover:underline"
+                    >
+                      取消翻译
+                    </button>
                   </>
                 ) : (
                   <>
