@@ -184,7 +184,7 @@ def translate_document_endpoint(project_id: str, doc_id: str, body: TranslationR
                 async def on_chunk_complete(idx: int, comp: int, translated: str):
                     job["completed_chunks"] = comp
                     if job["total_chunks"] > 0:
-                        job["progress"] = int(comp / job["total_chunks"] * 100)
+                        job["progress"] = max(0, min(100, int(comp / job["total_chunks"] * 100)))
                     job["chunks"][str(idx)] = {"index": idx, "content": translated, "done": True}
                     logger.info(f"翻译进度: job={job_id}, chunk={idx+1}/{job['total_chunks']}, progress={job['progress']}%, text_len={len(translated)}")
 
@@ -219,10 +219,10 @@ def translate_document_endpoint(project_id: str, doc_id: str, body: TranslationR
                     for d in dead:
                         ws_list.remove(d)
 
-                from app.services.translator import _smart_chunk_paragraphs
-                paragraphs = _smart_chunk_paragraphs(split_paragraphs(text))
+                from app.services.translator import _ast_aware_chunks
+                ast_chunks = _ast_aware_chunks(text)
                 all_tasks = []
-                for i, chunk in enumerate(paragraphs):
+                for i, chunk in enumerate(ast_chunks):
                     all_tasks.append((i, chunk["text"], chunk.get("skip_translate", False)))
 
                 job["total_chunks"] = len(all_tasks)

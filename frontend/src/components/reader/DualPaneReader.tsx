@@ -301,7 +301,7 @@ export function DualPaneReader() {
           <div className="relative w-full h-1 rounded-full bg-surface-200 dark:bg-surface-700 overflow-hidden">
             <div
               className="absolute inset-y-0 left-0 bg-accent-500 rounded-full transition-all duration-500"
-              style={{ width: `${translationResult?.progress || 0}%` }}
+              style={{ width: `${Math.min(100, translationResult?.progress || 0)}%` }}
             />
           </div>
         </div>
@@ -413,7 +413,7 @@ export function DualPaneReader() {
                 {translationResult?.status === "translating" ? (
                   <>
                     <span className="badge-primary text-xs">翻译中</span>
-                    <span className="text-xs text-surface-400">{translationResult?.progress || 0}%</span>
+                    <span className="text-xs text-surface-400">{Math.min(100, translationResult?.progress || 0)}%</span>
                   </>
                 ) : (
                   <>
