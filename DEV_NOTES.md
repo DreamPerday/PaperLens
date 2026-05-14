@@ -1516,6 +1516,102 @@ def compress_figure(data: bytes, max_width: int = 1200) -> bytes:
 
 ---
 
+## 问题二十：Token 统计细分 — 缓存命中/未命中 + DeepSeek 价格计算
+
+### 背景
+
+原有 Token 统计只有一个笼统的 `tokens_used` 字段，无法区分输入/输出 token，也无法区分缓存命中/未命中。用户需要精细化的成本控制和费用预估。
+
+### 需求
+
+1. Token 分类：缓存命中输入、缓存未命中输入、输出、总 Token
+2. DeepSeek V4 Flash 价格：
+   - 输入（缓存命中）：¥0.02 / 百万 tokens
+   - 输入（缓存未命中）：¥1.00 / 百万 tokens  
+   - 输出：¥2.00 / 百万 tokens
+3. 前端显示总价
+
+### 解决方案
+
+#### 后端改动
+
+**1. `translator.py`_translate_single_chunk** — 从 DeepSeek API `usage` 对象提取细分字段：
+
+```python
+usage = result.get("usage", {})
+prompt_tokens = usage.get("prompt_tokens", 0)
+completion_tokens = usage.get("completion_tokens", 0)
+cached_tokens = (
+    usage.get("prompt_tokens_details", {})
+    .get("cached_tokens", 0)
+)
+```
+
+**2. `translator.py`translate_document_async** — 汇总细分 token：
+```python
+total_prompt_tokens = sum(r.get("prompt_tokens", 0) for r in results)
+total_completion_tokens = sum(r.get("completion_tokens", 0) for r in results)
+total_cached_tokens = sum(r.get("cached_tokens", 0) for r in results)
+```
+
+**3. `storage.py`save_translation** — 存储细分字段 + 项目级汇总：
+```python
+self.update_project(project_id, {
+    "total_tokens": ...,
+    "total_prompt_tokens": ...,
+    "total_completion_tokens": ...,
+    "total_cached_tokens": ...,
+})
+```
+
+**4. `services/pricing.py`（新增）** — 价格计算引擎：
+- `PRICING` 字典：模型 → 三类单价
+- `calculate_cost(prompt_tokens, completion_tokens, cached_tokens, model)` 
+- 计算公式：`cached/1M*0.02 + (prompt-cached)/1M*1 + completion/1M*2`
+
+**5. API 端点返回细分**：
+- `/api/stats`：增加 `prompt_tokens`、`completion_tokens`、`cached_tokens`、`cost`
+- `/api/projects/token-stats`：增加同上字段 + 各项目 `cost`
+
+#### 前端改动
+
+**1. `types/index.ts`** — `TokenUsage` 接口：
+```typescript
+interface TokenUsage {
+  inputCacheHit: number    // 缓存命中
+  inputCacheMiss: number   // 缓存未命中
+  output: number           // 输出
+  total: number            // 总计
+  cost: number             // 价格 (CNY)
+}
+```
+
+**2. `store/index.ts`** — `refreshApiStats` 解析新字段：
+- 从 API 读取 `prompt_tokens`、`completion_tokens`、`cached_tokens`
+- `inputCacheMiss = prompt_tokens - cached_tokens`
+- 价格直接从 API `cost` 字段获取（后端计算）
+
+**3. `StatusBar.tsx`** — 底部状态栏同时显示 Token 总数 + 总价：
+```
+Tokens: 1.5M  |  ¥3.50
+```
+
+**4. `TokenStats.tsx`** — API 消耗统计面板新增四个卡片：
+- 输入（未命中）：带 `¥1/百万 tokens` 标注
+- 输入（缓存命中）：绿色高亮，`¥0.02/百万 tokens`
+- 输出 Tokens：`¥2/百万 tokens`
+- 总花费：accent 色高亮
+
+**5. `utils.ts`** — `formatCost` 改为 ¥ 符号：`¥{cost.toFixed(4)}`
+
+### 关键经验
+
+- **后端计算价格**，前端只负责展示。避免前端维护定价逻辑，保证价格计算一致性。
+- **DeepSeek API 的 `prompt_tokens_details.cached_tokens` 仅在缓存命中时返回**，默认值为 0。缓存未命中输入 = `prompt_tokens - cached_tokens`。
+- `save_token_history` 使用默认参数值（`=0`），兼容已有不带这些字段的历史记录，向后兼容。
+
+---
+
 ### 9. Print CSS 系统
 
 完整实现文件：[print.css](file:///d:/pythontest/translation-platform/frontend/src/ast/print.css)
