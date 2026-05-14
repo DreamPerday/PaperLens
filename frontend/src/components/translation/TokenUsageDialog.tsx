@@ -1,10 +1,17 @@
 "use client"
 
 import React, { useEffect, useState, useMemo } from "react"
-import { BarChart3, Zap, TrendingUp, Layers, Loader2, Coins, Activity, DollarSign } from "lucide-react"
+import { BarChart3, Zap, TrendingUp, Layers, Loader2, Coins, Activity, DollarSign, Database } from "lucide-react"
 import { useAppStore } from "@/store"
 import { Dialog, Button, Badge } from "@/components/ui"
 import { cn } from "@/lib/utils"
+
+const timeRanges = [
+  { key: "today", label: "今日", days: 1 },
+  { key: "7d", label: "7天", days: 7 },
+  { key: "30d", label: "30天", days: 30 },
+  { key: "all", label: "全部", days: -1 },
+] as const
 
 function formatToken(n: number): string {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`
@@ -17,10 +24,8 @@ function formatCost(cost: number): string {
 }
 
 function TokenBar({ value, max, color }: { value: number; max: number; color: string }) {
-
   const maxBar = 50
   const barPct = maxBar > 0 ? Math.min(100, (value / maxBar) * 100) : 0
-
   return (
     <div className="flex items-center gap-1.5">
       <div className="flex-1 h-5 rounded bg-surface-100 dark:bg-surface-800 overflow-hidden relative">
@@ -36,6 +41,8 @@ function TokenBar({ value, max, color }: { value: number; max: number; color: st
   )
 }
 
+const emptyTokenData = { inputCacheMiss: 0, inputCacheHit: 0, output: 0, cost: 0, total: 0 }
+
 export function TokenUsageDialog() {
   const tokenDialogOpen = useAppStore((s) => s.tokenDialogOpen)
   const setTokenDialogOpen = useAppStore((s) => s.setTokenDialogOpen)
@@ -44,21 +51,57 @@ export function TokenUsageDialog() {
   const totalTokenCost = useAppStore((s) => s.totalTokenCost)
   const tokenLoading = useAppStore((s) => s.tokenLoading)
   const loadTokenStats = useAppStore((s) => s.loadTokenStats)
-
   const tokenHistory = useAppStore((s) => s.tokenHistory)
-  const tokenHistoryDays = useAppStore((s) => s.tokenHistoryDays)
   const tokenHistoryLoading = useAppStore((s) => s.tokenHistoryLoading)
   const loadTokenHistory = useAppStore((s) => s.loadTokenHistory)
 
-  const [days, setDays] = useState(tokenHistoryDays)
+  const [timeRange, setTimeRange] = useState<"today" | "7d" | "30d" | "all">("all")
   const [subTab, setSubTab] = useState<"breakdown" | "history">("breakdown")
 
   useEffect(() => {
     if (tokenDialogOpen) {
       loadTokenStats()
-      loadTokenHistory(tokenHistoryDays)
+      loadTokenHistory(90)
     }
-  }, [tokenDialogOpen, loadTokenStats, loadTokenHistory, tokenHistoryDays])
+  }, [tokenDialogOpen, loadTokenStats, loadTokenHistory])
+
+  const tokenData = useMemo(() => {
+    if (timeRange === "all") {
+      const total = totalTokenUsage
+      const prompt = total > 0 ? Math.round(total * 0.6) : 0
+      const completion = total - prompt
+      return {
+        inputCacheMiss: prompt,
+        inputCacheHit: 0,
+        output: completion,
+        total,
+        cost: totalTokenCost,
+      }
+    }
+    if (!tokenHistory) return emptyTokenData
+    const h = tokenHistory
+    const prompt = h.total_prompt_tokens || 0
+    const completion = h.total_completion_tokens || 0
+    const cached = h.total_cached_tokens || 0
+    const total = h.total_tokens || (prompt + completion)
+    const cacheMiss = Math.max(0, prompt - cached)
+    const cost = (cached / 1_000_000) * 0.02 + (cacheMiss / 1_000_000) * 1.0 + (completion / 1_000_000) * 2.0
+    return {
+      inputCacheMiss: cacheMiss,
+      inputCacheHit: cached,
+      output: completion,
+      total,
+      cost: Math.round(cost * 1_000_000) / 1_000_000,
+    }
+  }, [timeRange, totalTokenUsage, totalTokenCost, tokenHistory])
+
+  const handleTimeRangeChange = (key: "today" | "7d" | "30d" | "all") => {
+    setTimeRange(key)
+    if (key !== "all") {
+      const r = timeRanges.find((t) => t.key === key)
+      if (r && r.days > 0) loadTokenHistory(r.days)
+    }
+  }
 
   const maxTokens = useMemo(() => {
     if (!tokenBreakdown || tokenBreakdown.length === 0) return 1
@@ -75,8 +118,8 @@ export function TokenUsageDialog() {
   )
 
   return (
-    <Dialog open={tokenDialogOpen} onClose={() => setTokenDialogOpen(false)} className="!max-w-lg">
-      <div className="flex flex-col max-h-[480px]">
+    <Dialog open={tokenDialogOpen} onClose={() => setTokenDialogOpen(false)} className="!max-w-xl">
+      <div className="flex flex-col max-h-[600px]">
         <div className="flex items-center gap-3 px-2 py-3 border-b border-surface-200/50 dark:border-surface-700/30">
           <BarChart3 className="w-5 h-5 text-accent-500 flex-shrink-0" />
           <div>
@@ -94,43 +137,95 @@ export function TokenUsageDialog() {
           )}
 
           {!tokenLoading && (
-            <div className="p-5 pt-3">
-              <div className="grid grid-cols-2 gap-2.5 mb-4">
-                <div className="p-3 rounded-xl bg-gradient-to-br from-accent-50 to-accent-100/30 dark:from-accent-500/10 dark:to-accent-500/5 border border-accent-200/30 dark:border-accent-500/20">
-                  <Coins className="w-4 h-4 text-accent-500 mb-1" />
-                  <span className="block text-lg font-bold text-surface-900 dark:text-surface-100">
-                    {formatToken(totalTokenUsage)}
+            <div className="p-4">
+              <div className="flex gap-1 mb-3">
+                {timeRanges.map((r) => (
+                  <button
+                    key={r.key}
+                    onClick={() => handleTimeRangeChange(r.key)}
+                    className={cn(
+                      "px-2.5 py-1 rounded-md text-xs font-medium transition-all",
+                      timeRange === r.key
+                        ? "bg-accent-500 text-white"
+                        : "text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800"
+                    )}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <div className="p-2.5 rounded-lg bg-surface-50 dark:bg-surface-800/50 border border-surface-200/40 dark:border-surface-700/30">
+                  <div className="flex items-center gap-1 text-surface-400 mb-0.5">
+                    <Zap className="w-3 h-3" />
+                    <span className="text-2xs">输入（未命中）</span>
+                  </div>
+                  <span className="block text-base font-semibold text-surface-900 dark:text-surface-100">
+                    {formatToken(tokenData.inputCacheMiss)}
+                  </span>
+                  <div className="text-2xs text-surface-400">¥1.00/百万 tokens</div>
+                </div>
+                <div className="p-2.5 rounded-lg bg-surface-50 dark:bg-surface-800/50 border border-surface-200/40 dark:border-surface-700/30">
+                  <div className="flex items-center gap-1 text-surface-400 mb-0.5">
+                    <Database className="w-3 h-3" />
+                    <span className="text-2xs">输入（缓存命中）</span>
+                  </div>
+                  <span className="block text-base font-semibold text-emerald-500">
+                    {formatToken(tokenData.inputCacheHit)}
+                  </span>
+                  <div className="text-2xs text-surface-400">¥0.02/百万 tokens</div>
+                </div>
+                <div className="p-2.5 rounded-lg bg-surface-50 dark:bg-surface-800/50 border border-surface-200/40 dark:border-surface-700/30">
+                  <div className="flex items-center gap-1 text-surface-400 mb-0.5">
+                    <TrendingUp className="w-3 h-3" />
+                    <span className="text-2xs">输出 Tokens</span>
+                  </div>
+                  <span className="block text-base font-semibold text-surface-900 dark:text-surface-100">
+                    {formatToken(tokenData.output)}
+                  </span>
+                  <div className="text-2xs text-surface-400">¥2.00/百万 tokens</div>
+                </div>
+                <div className="p-2.5 rounded-lg bg-gradient-to-br from-amber-50 to-amber-100/20 dark:from-amber-500/10 dark:to-amber-500/5 border border-amber-200/30 dark:border-amber-500/20">
+                  <div className="flex items-center gap-1 text-amber-500 mb-0.5">
+                    <DollarSign className="w-3 h-3" />
+                    <span className="text-2xs">总花费</span>
+                  </div>
+                  <span className="block text-base font-bold text-amber-600 dark:text-amber-400">
+                    {formatCost(tokenData.cost)}
+                  </span>
+                  <div className="text-2xs text-surface-400">预估金额</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5 mb-3">
+                <div className="p-2.5 rounded-lg bg-gradient-to-br from-accent-50 to-accent-100/30 dark:from-accent-500/10 dark:to-accent-500/5 border border-accent-200/30 dark:border-accent-500/20">
+                  <Coins className="w-4 h-4 text-accent-500 mb-0.5" />
+                  <span className="block text-base font-bold text-surface-900 dark:text-surface-100">
+                    {formatToken(tokenData.total)}
                   </span>
                   <span className="text-2xs text-surface-400">总 Tokens</span>
                 </div>
-                <div className="p-3 rounded-xl bg-gradient-to-br from-amber-50 to-amber-100/30 dark:from-amber-500/10 dark:to-amber-500/5 border border-amber-200/30 dark:border-amber-500/20">
-                  <DollarSign className="w-4 h-4 text-amber-500 mb-1" />
-                  <span className="block text-lg font-bold text-surface-900 dark:text-surface-100">
-                    {formatCost(totalTokenCost)}
-                  </span>
-                  <span className="text-2xs text-surface-400">预估费用</span>
-                </div>
-                <div className="p-3 rounded-xl bg-surface-50 dark:bg-surface-800/50 border border-surface-200/60 dark:border-surface-700/30">
-                  <Layers className="w-4 h-4 text-surface-500 mb-1" />
-                  <span className="block text-lg font-bold text-surface-900 dark:text-surface-100">{totalDocs}</span>
+                <div className="p-2.5 rounded-lg bg-surface-50 dark:bg-surface-800/50 border border-surface-200/60 dark:border-surface-700/30">
+                  <Layers className="w-4 h-4 text-surface-500 mb-0.5" />
+                  <span className="block text-base font-bold text-surface-900 dark:text-surface-100">{totalDocs}</span>
                   <span className="text-2xs text-surface-400">文档数</span>
                 </div>
-                <div className="p-3 rounded-xl bg-surface-50 dark:bg-surface-800/50 border border-surface-200/60 dark:border-surface-700/30">
-                  <Activity className="w-4 h-4 text-surface-500 mb-1" />
-                  <span className="block text-lg font-bold text-surface-900 dark:text-surface-100">{totalTrans}</span>
+                <div className="p-2.5 rounded-lg bg-surface-50 dark:bg-surface-800/50 border border-surface-200/60 dark:border-surface-700/30">
+                  <Activity className="w-4 h-4 text-surface-500 mb-0.5" />
+                  <span className="block text-base font-bold text-surface-900 dark:text-surface-100">{totalTrans}</span>
                   <span className="text-2xs text-surface-400">翻译次数</span>
                 </div>
-                <div className="p-3 rounded-xl bg-surface-50 dark:bg-surface-800/50 border border-surface-200/60 dark:border-surface-700/30">
-                  <TrendingUp className="w-4 h-4 text-surface-500 mb-1" />
-                  <span className="block text-lg font-bold text-surface-900 dark:text-surface-100">
+                <div className="p-2.5 rounded-lg bg-surface-50 dark:bg-surface-800/50 border border-surface-200/60 dark:border-surface-700/30">
+                  <TrendingUp className="w-4 h-4 text-surface-500 mb-0.5" />
+                  <span className="block text-base font-bold text-surface-900 dark:text-surface-100">
                     {totalTrans > 0 ? formatToken(Math.round(totalTokenUsage / totalTrans)) : 0}
                   </span>
                   <span className="text-2xs text-surface-400">均/次</span>
                 </div>
               </div>
 
-              {
-              tokenBreakdown && tokenBreakdown.length > 0 && (
+              {tokenBreakdown && tokenBreakdown.length > 0 && (
                 <div>
                   <div className="flex border-b border-surface-200/50 dark:border-surface-700/30 mb-3">
                     {(["breakdown", "history"] as const).map((tab) => (
@@ -179,23 +274,6 @@ export function TokenUsageDialog() {
 
                   {subTab === "history" && (
                     <div>
-                      <div className="flex items-center gap-2 mb-3">
-                        {[7, 30, 90, 365].map((d) => (
-                          <button
-                            key={d}
-                            onClick={() => { setDays(d); loadTokenHistory(d) }}
-                            className={cn(
-                              "px-2 py-0.5 text-2xs rounded-full transition-colors",
-                              days === d
-                                ? "bg-accent-100 dark:bg-accent-500/20 text-accent-600 dark:text-accent-400 font-medium"
-                                : "text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800"
-                            )}
-                          >
-                            {d >= 365 ? "1年" : `${d}天`}
-                          </button>
-                        ))}
-                      </div>
-
                       {tokenHistoryLoading && (
                         <div className="flex items-center justify-center py-6 gap-2 text-surface-400">
                           <Loader2 className="w-4 h-4 animate-spin" />

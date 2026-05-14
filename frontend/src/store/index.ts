@@ -119,10 +119,14 @@ interface AppState {
     records: Array<{
       timestamp: string; project_id: string; doc_id: string
       doc_name: string; tokens_used: number; paragraph_count: number
+      prompt_tokens?: number; completion_tokens?: number; cached_tokens?: number
     }>
-    daily_summary: Array<{ date: string; tokens: number; count: number }>
+    daily_summary: Array<{ date: string; tokens: number; prompt_tokens: number; completion_tokens: number; cached_tokens: number; count: number }>
     total_records: number
     total_tokens: number
+    total_prompt_tokens: number
+    total_completion_tokens: number
+    total_cached_tokens: number
   } | null
   tokenHistoryDays: number
   tokenHistoryLoading: boolean
@@ -917,6 +921,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           daily_summary: res.data.daily_summary || [],
           total_records: res.data.total_records || 0,
           total_tokens: res.data.total_tokens || 0,
+          total_prompt_tokens: res.data.total_prompt_tokens || 0,
+          total_completion_tokens: res.data.total_completion_tokens || 0,
+          total_cached_tokens: res.data.total_cached_tokens || 0,
         },
         tokenHistoryLoading: false,
       })
