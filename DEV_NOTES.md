@@ -1612,6 +1612,128 @@ Tokens: 1.5M  |  ¥3.50
 
 ---
 
+## 问题二十一：翻译进度条卡死 0% — 防卡死与鲁棒性增强
+
+### 背景
+
+用户反馈翻译过程中进度条一直停在 0%，实际翻译已完成大部分，但部分数据缺失。更严重的是：因为 `translatingFileId` 未释放，用户无法点"重新翻译"来重试。
+
+### 根因分析（多个并发问题）
+
+**Bug 1 — 后端后处理异常未被捕获**
+
+`projects.py` 中 `_translate_task` 执行翻译后处理（保存结果、发 WebSocket done、记录 token history）时没有 try/except。如果 `save_translation` 或 `save_token_history` 中任何一步抛出异常（如文件写入失败、JSON 序列化错误），`job["status"]` 就永远卡在 `"translating"`，前端轮询永远返回 `progress: 0`。
+
+**Bug 2 — 前端不允许重新翻译**
+
+`store/index.ts` 中 `startTranslation` 有一个守卫：
+
+```typescript
+if (state.translatingFileId) {
+  console.warn(`Translation already in progress...`)
+  return  // ← 直接拒绝，无逃生路径
+}
+```
+
+进度条卡死后 `translatingFileId` 永远不会被清除，导致用户完全无法重新翻译。
+
+**Bug 3 — 前端 polling catch 无日志**
+
+三个 `catch {}` 空块静默吞掉所有错误，导致即使 polling 本身出错（网络错误、跨域、状态码异常），开发者完全无法感知。
+
+**Bug 4 — 无卡死检测（watchdog）**
+
+如果 WebSocket 挂了但前端没有感知，或者后端 chunk 推送停止了，前端没有任何超时检测机制，只能永远等待。
+
+### 解决方案
+
+#### 修复 1：后端 try/except 包裹所有后处理逻辑
+
+`projects.py:236-291`：
+
+```python
+try:
+    if result["success"] or ...:
+        job["status"] = "completed"
+        storage_service.save_translation(...)
+        storage_service.update_document(...)
+        save_token_history(...)
+        # WebSocket "done" 消息...
+    else:
+        job["status"] = "failed"
+except Exception as e:
+    logger.error(f"翻译后处理异常: job={job_id}, error={e}", exc_info=True)
+    job["status"] = "failed"
+    job["error"] = f"后处理异常: {str(e)}"
+    job["result"] = {"text": result.get("text", ""), ...}
+    storage_service.update_document(project_id, doc_id, {"status": "failed"})
+```
+
+关键：**即使后处理失败，job 状态也必须设置为 "failed"**，让前端轮询感知到并释放 `translatingFileId`。
+
+#### 修复 2：前端允许强制重新翻译
+
+将 `startTranslation` 中的守卫从"直接拒绝"改为"清理旧状态 + 继续"：
+
+```typescript
+if (state.translatingFileId) {
+  console.warn(`Force restarting: was=${state.translatingFileId}, new=${docId}`)
+  get().setTranslatingFileId(null)   // ← 释放锁
+  set(s => ({ translationResult: { ...s.translationResult, status: "error", progress: 0 } }))
+}
+```
+
+#### 修复 3：所有 catch 块添加 console.error
+
+```typescript
+// 之前：
+} catch {}
+
+// 之后：
+} catch (e) {
+  console.error("[STORE] translation poll error:", e)
+}
+```
+
+#### 修复 4：Watchdog 30 秒卡死检测
+
+```typescript
+let lastProgressTime = Date.now()
+let usePolling = false
+
+// 每次收到 progress 更新时刷新
+lastProgressTime = Date.now()
+
+// 每 5 秒检查一次
+const watchdogInterval = setInterval(() => {
+  if (done) { clearInterval(watchdogInterval); return }
+  const stallDuration = Date.now() - lastProgressTime
+  if (stallDuration > 30_000) {
+    if (!usePolling && ws) {
+      // WS 层卡死 → 关闭 WS 切换为 polling
+      ws.close()
+      startPolling()
+    } else {
+      // polling 也卡死了 → 标记失败，释放锁
+      finishWith(partialContent, 0, "error")
+    }
+  }
+}, 5_000)
+```
+
+**两阶段降级**：
+1. WebSocket 卡死 → 自动切换 HTTP polling
+2. HTTP polling 也卡死 → 标记翻译失败，释放 `translatingFileId`
+
+### 其他 AI 可参考的经验
+
+- **任何长耗时异步任务，必须保证最终状态一致**。无论成功/失败/后处理异常，job 的 `status` 必须从 `"translating"` 转移为 `"completed"` 或 `"failed"`。用 `try/except` 包裹整个后处理逻辑是必须的。
+- **前端进度追踪的"锁"必须有逃生路径**。如果 `translatingFileId` 不允许覆盖，一旦卡死用户就完全无解。要么提供"取消翻译"按钮，要么允许强制重新翻译。
+- **空 catch 是调试噩梦**。polling 和 WebSocket 的 catch 块至少应包含 `console.error`，最好还能上报到监控系统。
+- **Watchdog 是 WebSocket 类应用的标配**。WebSocket 的 `onclose` 不一定能捕获所有断连场景（如代理超时、防火墙静默切断），watchdog 作为兜底机制确保不会永久等待。
+
+---
+
 ### 9. Print CSS 系统
 
 完整实现文件：[print.css](file:///d:/pythontest/translation-platform/frontend/src/ast/print.css)
