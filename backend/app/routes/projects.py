@@ -23,6 +23,21 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 _translation_jobs: dict = {}
 _websocket_clients: dict = {}
 
+
+def _build_partial_text(job: dict) -> str:
+    """Build partial translation text from completed chunks, preserving order."""
+    chunks = job.get("chunks", {})
+    if not chunks:
+        return ""
+    sorted_indices = sorted(int(k) for k in chunks.keys())
+    parts = []
+    for idx in sorted_indices:
+        chunk = chunks[str(idx)]
+        content = chunk.get("content", "")
+        if content:
+            parts.append(content)
+    return "\n\n".join(parts)
+
 @router.get("")
 def list_projects():
     projects = storage_service.list_projects()
@@ -172,6 +187,17 @@ def translate_document_endpoint(project_id: str, doc_id: str, body: TranslationR
                         job["progress"] = int(comp / job["total_chunks"] * 100)
                     job["chunks"][str(idx)] = {"index": idx, "content": translated, "done": True}
                     logger.info(f"翻译进度: job={job_id}, chunk={idx+1}/{job['total_chunks']}, progress={job['progress']}%, text_len={len(translated)}")
+
+                    # 增量保存翻译结果 — 页面刷新后可恢复
+                    try:
+                        partial_text = _build_partial_text(job)
+                        storage_service.save_translation(
+                            project_id, doc_id,
+                            content=partial_text,
+                            tokens_used=0,
+                        )
+                    except Exception as e:
+                        logger.warning(f"增量保存翻译状态失败: {e}")
 
                     ws_list = _websocket_clients.get(job_id, [])
                     if ws_list:

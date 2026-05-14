@@ -33,6 +33,7 @@ interface AppState {
 
   translationResult: TranslationResult | null
   setTranslationResult: (result: TranslationResult | null) => void
+  recoverTranslation: (projectId: string, docId: string) => Promise<void>
   startTranslation: (docId: string) => Promise<void>
 
   readerSettings: ReaderSettings
@@ -288,6 +289,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           createdAt: new Date().toISOString(),
         },
       })
+
+      if (get().translatingFileId === id) {
+        get().recoverTranslation(projectId, id)
+      }
     } catch (err) {
       console.error(`[STORE] Failed to load file content:`, err)
       set({
@@ -303,6 +308,100 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   translationResult: null,
   setTranslationResult: (result) => set({ translationResult: result }),
+
+  recoverTranslation: async (projectId, docId) => {
+    const state = get()
+    if (state.translatingFileId !== docId) return
+
+    console.log(`[STORE] Recovering translation state: project=${projectId}, doc=${docId}`)
+    try {
+      const statusRes = await api.translation.status(projectId, docId)
+      const job = statusRes.data
+      if (!job) return
+
+      if (job.status === "translating") {
+        set((s) => ({
+          translationResult: s.translationResult ? {
+            ...s.translationResult,
+            progress: job.progress || 0,
+            status: "translating",
+          } : null,
+        }))
+
+        const pollInterval = setInterval(async () => {
+          const current = get()
+          if (current.translatingFileId !== docId) {
+            clearInterval(pollInterval)
+            return
+          }
+          try {
+            const sr = await api.translation.status(projectId, docId)
+            const j = sr.data
+            if (!j) return
+
+            if (j.status === "completed" && j.result) {
+              clearInterval(pollInterval)
+              get().setTranslatingFileId(null)
+              get().refreshApiStats()
+              set((s) => ({
+                translationResult: s.translationResult ? {
+                  ...s.translationResult,
+                  translatedContent: j.result.text || "",
+                  progress: 100,
+                  status: "completed",
+                  tokenUsage: {
+                    input: 0,
+                    output: j.result.tokens || 0,
+                    total: j.result.tokens || 0,
+                    cost: 0,
+                  },
+                } : null,
+              }))
+              console.log("[STORE] Translation recovered via polling")
+            } else if (j.status === "failed") {
+              clearInterval(pollInterval)
+              get().setTranslatingFileId(null)
+              set((s) => ({
+                translationResult: s.translationResult ? {
+                  ...s.translationResult,
+                  status: "error",
+                  progress: 0,
+                } : null,
+              }))
+            } else if (j.status === "translating") {
+              set((s) => ({
+                translationResult: s.translationResult ? {
+                  ...s.translationResult,
+                  progress: j.progress || 0,
+                  status: "translating",
+                } : null,
+              }))
+            }
+          } catch {}
+        }, 2000)
+      } else if (job.status === "completed" && job.result) {
+        get().setTranslatingFileId(null)
+        get().refreshApiStats()
+        set((s) => ({
+          translationResult: s.translationResult ? {
+            ...s.translationResult,
+            translatedContent: job.result.text || "",
+            progress: 100,
+            status: "completed",
+            tokenUsage: {
+              input: 0,
+              output: job.result.tokens || 0,
+              total: job.result.tokens || 0,
+              cost: 0,
+            },
+          } : null,
+        }))
+        console.log("[STORE] Translation already completed, state restored")
+      }
+    } catch (err) {
+      console.warn(`[STORE] Translation recovery failed:`, err)
+    }
+  },
 
   startTranslation: async (docId) => {
     const state = get()
