@@ -207,19 +207,6 @@ CSS 自定义属性实现 Design Token，支持亮色/暗色一键切换：
 
 通过 Tailwind `@apply` 引用为 `text-surface-600`、`bg-accent-500` 等。
 
-## 开发笔记
-
-详细的开发问题记录和解决方案参见 [DEV_NOTES.md](./DEV_NOTES.md)，涵盖：
-
-- 前端文档渲染性能优化 (React → dangerouslySetInnerHTML)
-- TOC 导航滚动问题修复
-- DeepSeek API 翻译失败排查 (system prompt 过大、chunk 过大)
-- WYSIWYG 导出一致性修复 (SSR KaTeX + 全格式统一)
-- 翻译进度条卡死防护 (Watchdog + try/except + 强制重翻译)
-- Token 统计细分与定价
-- 智能分块与完整性校验
-- 等等 21 个已解决问题
-
 ## 注意事项
 
 1. **DeepSeek API Key**：需要在 `.env` 中配置有效的 API Key，DeepSeek 模型名为 `deepseek-v4-flash`
@@ -229,3 +216,11 @@ CSS 自定义属性实现 Design Token，支持亮色/暗色一键切换：
 5. **端口配置**：前端通过 `NEXT_PUBLIC_API_PORT` 配置后端端口
 6. **CORS**：后端已配置 CORS，允许前端跨域访问
 7. **FFmpeg** (可选)：视频/音频处理需要配置 FFmpeg 路径
+
+## 致谢
+
+- [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) — 文档解析阶段使用 PaddleOCR 格式的 Markdown 输出作为输入源，AST 解析器针对 PaddleOCR 的版面分析结果做了专门的语义分组优化
+- [DeepSeek](https://deepseek.com/) — 提供强大的 AI 翻译能力（`deepseek-v4-flash` 模型）
+- [KaTeX](https://katex.org/) — 数学公式服务端预渲染，零客户端 JS 依赖
+- [Playwright](https://playwright.dev/) — PDF 导出引擎
+- 所有开源依赖库的维护者
