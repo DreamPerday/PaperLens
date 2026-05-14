@@ -9,6 +9,10 @@ from typing import Optional, Callable, Awaitable
 import httpx
 from app.config import settings
 
+from app.services.parser.markdown_parser import MarkdownParser
+from app.services.parser.ast_renderer import MarkdownRenderer
+from app.models.block_schema import Block, BlockType, Document
+
 TRANSLATE_PROMPT = """Translate the following English academic text into fluent, professional Chinese.
 
 CRITICAL — Preserve ALL Markdown formatting markers EXACTLY as-is:
@@ -468,6 +472,164 @@ async def _translate_single_chunk(
         }
 
 
+def _ast_aware_chunks(text: str) -> list[dict]:
+    """Parse PaddleOCR markdown into AST blocks, then group semantically for translation.
+
+    Each block type has distinct translation semantics:
+    - heading: translates title, keeps ### prefix
+    - paragraph: normal translation
+    - table: each cell translated individually
+    - code_block: skip translation (code is language-agnostic)
+    - math_block: skip translation (math is language-agnostic)
+    - blockquote: translate quoted text
+    - html_block: translate visible text, keep tags
+    - bullet_list / ordered_list: translate items
+    - thematic_break: skip
+
+    Semantic rules for grouping:
+    - A heading ALWAYS starts a new chunk (section boundary)
+    - A table ALWAYS is a standalone chunk
+    - Code/math blocks ALWAYS are standalone chunks
+    - Lists keep all items in one chunk
+    - Paragraphs are grouped up to size limits
+    """
+    parser = MarkdownParser()
+    renderer = MarkdownRenderer()
+    doc = parser.parse(text)
+    blocks = doc.blocks
+
+    if not blocks:
+        return [{"text": text, "skip_translate": False}]
+
+    chunks = []
+    current_blocks = []
+    current_len = 0
+
+    for block in blocks:
+        block_text = renderer._render_block(block) or ""
+        block_len = len(block_text)
+        density = _math_density(block_text)
+
+        # ---------- special block types: always standalone ----------
+        standalone_types = {
+            BlockType.heading, BlockType.table, BlockType.code_block,
+            BlockType.math_block, BlockType.thematic_break,
+        }
+
+        if block.type in standalone_types:
+            # Flush current accumulated blocks
+            if current_blocks:
+                chunks.append(_make_chunk(current_blocks, renderer))
+                current_blocks = []
+                current_len = 0
+
+            # Add standalone block as its own chunk
+            skip = block.type in (BlockType.code_block, BlockType.math_block,
+                                   BlockType.thematic_break)
+            if block.type == BlockType.heading:
+                skip = _is_references_section(block_text)
+            chunks.append({
+                "text": block_text,
+                "skip_translate": skip,
+                "block_type": block.type.value,
+            })
+            continue
+
+        # ---------- list: keep items together ----------
+        if block.type in (BlockType.bullet_list, BlockType.ordered_list):
+            if current_blocks:
+                chunks.append(_make_chunk(current_blocks, renderer))
+                current_blocks = []
+                current_len = 0
+            # If list is too big, it still goes as one chunk
+            chunks.append(_make_chunk([block], renderer, block.type.value))
+            continue
+
+        # ---------- HTML block: check if it's a table/figure ----------
+        if block.type == BlockType.html_block:
+            is_html_table = '<table' in block.content.lower()
+            if is_html_table:
+                if current_blocks:
+                    chunks.append(_make_chunk(current_blocks, renderer))
+                    current_blocks = []
+                    current_len = 0
+                chunks.append({
+                    "text": block_text,
+                    "skip_translate": False,
+                    "block_type": "html_table",
+                })
+                continue
+            # non-table HTML: treat as normal paragraph
+            pass
+
+        # ---------- paragraph / blockquote / html_block: group by size ----------
+        max_chunk = MATH_HEAVY_CHUNK_MAX if density > MATH_DENSITY_THRESHOLD else NORMAL_CHUNK_MAX
+
+        if current_len + block_len > max_chunk and current_blocks:
+            chunks.append(_make_chunk(current_blocks, renderer))
+            current_blocks = [block]
+            current_len = block_len + 2
+        else:
+            current_blocks.append(block)
+            current_len += block_len + 2
+
+    if current_blocks:
+        chunks.append(_make_chunk(current_blocks, renderer))
+
+    # Merge tiny adjacent chunks (e.g. a short heading + its single paragraph)
+    chunks = _merge_tiny_chunks(chunks)
+
+    return chunks
+
+
+def _make_chunk(blocks: list[Block], renderer: MarkdownRenderer,
+                block_type: str = "paragraph") -> dict:
+    """Serialize a group of blocks to markdown text for translation."""
+    if not blocks:
+        return {"text": "", "skip_translate": True}
+    if len(blocks) == 1:
+        return {
+            "text": renderer._render_block(blocks[0]) or "",
+            "skip_translate": False,
+            "block_type": block_type,
+        }
+    text = "\n\n".join(
+        renderer._render_block(b) or "" for b in blocks
+    )
+    return {"text": text, "skip_translate": False, "block_type": block_type}
+
+
+def _merge_tiny_chunks(chunks: list[dict]) -> list[dict]:
+    """Merge adjacent tiny chunks (e.g., short heading + 1 paragraph) to preserve context."""
+    TINY_CHUNK = 200
+    MAX_MERGED = NORMAL_CHUNK_MAX
+
+    if len(chunks) < 2:
+        return chunks
+
+    merged = []
+    i = 0
+    while i < len(chunks):
+        current = chunks[i]
+        # Try to merge the next chunk if this one is tiny
+        if (i + 1 < len(chunks)
+                and not current.get("skip_translate")
+                and not chunks[i + 1].get("skip_translate")):
+            combined_len = len(current["text"]) + len(chunks[i + 1]["text"])
+            if len(current["text"]) < TINY_CHUNK and combined_len < MAX_MERGED:
+                merged.append({
+                    "text": current["text"] + "\n\n" + chunks[i + 1]["text"],
+                    "skip_translate": False,
+                    "block_type": current.get("block_type", "paragraph"),
+                })
+                i += 2
+                continue
+        merged.append(current)
+        i += 1
+
+    return merged
+
+
 async def translate_document_async(
     text: str,
     source_lang: str = "en",
@@ -477,7 +639,7 @@ async def translate_document_async(
     if not settings.deepseek_api_key or settings.deepseek_api_key == "your-api-key-here":
         return {"text": text, "tokens": len(text) // 2, "success": True}
 
-    paragraphs = _smart_chunk_paragraphs(_block_aware_split(text))
+    paragraphs = _ast_aware_chunks(text)
     translate_tasks = []
     skip_chunks = []
 
