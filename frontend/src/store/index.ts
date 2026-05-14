@@ -350,7 +350,8 @@ export const useAppStore = create<AppState>((set, get) => ({
                   progress: 100,
                   status: "completed",
                   tokenUsage: {
-                    input: 0,
+                    inputCacheHit: 0,
+                    inputCacheMiss: 0,
                     output: j.result.tokens || 0,
                     total: j.result.tokens || 0,
                     cost: 0,
@@ -391,7 +392,8 @@ export const useAppStore = create<AppState>((set, get) => ({
             progress: 100,
             status: "completed",
             tokenUsage: {
-              input: 0,
+              inputCacheHit: 0,
+              inputCacheMiss: 0,
               output: job.result.tokens || 0,
               total: job.result.tokens || 0,
               cost: 0,
@@ -456,7 +458,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         translatedContent: "",
         progress: 0,
         status: "translating",
-        tokenUsage: { input: 0, output: 0, total: 0, cost: 0 },
+        tokenUsage: { inputCacheHit: 0, inputCacheMiss: 0, output: 0, total: 0, cost: 0 },
         cached: false,
         createdAt: new Date().toISOString(),
       },
@@ -494,7 +496,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           progress: status === "completed" ? 100 : 0,
           status,
           tokenUsage: {
-            input: 0,
+            inputCacheHit: 0,
+            inputCacheMiss: 0,
             output: tokens || 0,
             total: tokens || 0,
             cost: 0,
