@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useEffect, useState, useMemo } from "react"
-import { BarChart3, Zap, TrendingUp, Layers, Loader2, Coins, Activity } from "lucide-react"
+import { BarChart3, Zap, TrendingUp, Layers, Loader2, Coins, Activity, DollarSign } from "lucide-react"
 import { useAppStore } from "@/store"
 import { Dialog, Button, Badge } from "@/components/ui"
 import { cn } from "@/lib/utils"
@@ -10,6 +10,10 @@ function formatToken(n: number): string {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`
   if (n >= 1000) return `${(n / 1000).toFixed(0)}K`
   return String(n)
+}
+
+function formatCost(cost: number): string {
+  return `¥${cost.toFixed(4)}`
 }
 
 function TokenBar({ value, max, color }: { value: number; max: number; color: string }) {
@@ -37,6 +41,7 @@ export function TokenUsageDialog() {
   const setTokenDialogOpen = useAppStore((s) => s.setTokenDialogOpen)
   const tokenBreakdown = useAppStore((s) => s.tokenBreakdown)
   const totalTokenUsage = useAppStore((s) => s.totalTokenUsage)
+  const totalTokenCost = useAppStore((s) => s.totalTokenCost)
   const tokenLoading = useAppStore((s) => s.tokenLoading)
   const loadTokenStats = useAppStore((s) => s.loadTokenStats)
 
@@ -97,6 +102,13 @@ export function TokenUsageDialog() {
                     {formatToken(totalTokenUsage)}
                   </span>
                   <span className="text-2xs text-surface-400">总 Tokens</span>
+                </div>
+                <div className="p-3 rounded-xl bg-gradient-to-br from-amber-50 to-amber-100/30 dark:from-amber-500/10 dark:to-amber-500/5 border border-amber-200/30 dark:border-amber-500/20">
+                  <DollarSign className="w-4 h-4 text-amber-500 mb-1" />
+                  <span className="block text-lg font-bold text-surface-900 dark:text-surface-100">
+                    {formatCost(totalTokenCost)}
+                  </span>
+                  <span className="text-2xs text-surface-400">预估费用</span>
                 </div>
                 <div className="p-3 rounded-xl bg-surface-50 dark:bg-surface-800/50 border border-surface-200/60 dark:border-surface-700/30">
                   <Layers className="w-4 h-4 text-surface-500 mb-1" />

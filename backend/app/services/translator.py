@@ -15,22 +15,29 @@ from app.models.block_schema import Block, BlockType, Document
 
 TRANSLATE_PROMPT = """Translate the following English academic text into fluent, professional Chinese.
 
-CRITICAL — Preserve ALL Markdown formatting markers EXACTLY as-is:
-- **bold text**: translate the text between ** and ** markers, keep the markers
-- *italic text*: translate the text between * and * markers, keep the markers  
-- `inline code`: translate the code text, keep the backticks
+CRITICAL — Preserve ALL formatting EXACTLY as-is:
+
+Markdown markers:
+- **bold text**: translate text between ** markers, keep ** markers unchanged
+- *italic text*: translate text between * markers, keep * markers unchanged
+- `inline code`: translate code text, keep backticks unchanged
 - ### headings: translate heading text, keep ### prefix unchanged
 - - bullet / * bullet / + bullet list markers: keep markers, translate item text
-- 1. numbered / 2. numbered list markers: keep the "N. " prefix, translate item text
+- 1. numbered / 2. numbered list markers: keep "N. " prefix, translate item text
 - > blockquotes: keep > prefix, translate quoted text
 - ``` code blocks ```: keep block delimiters, translate code content
-- | table | rows |: keep pipe-separated table structure exactly
-- [link text](url): translate link text between [ and ], keep URL in ( )
+- | markdown table rows |: keep pipe-separated structure exactly
+- [link text](url): translate text between [ and ], keep URL in ( )
 - Blank lines between paragraphs: preserve paragraph separation
+
+HTML tags: ALL [HTML_N] placeholders represent HTML tags. You MUST:
+- Keep [HTML_N] EXACTLY as-is — DO NOT modify, translate, remove, or reorder them
+- Only translate the visible text between [HTML_N] placeholders
+- HTML table tags ([HTML_N] marking <table>, <tr>, <td>, <th>, etc.) MUST appear in your output in their original positions
 
 Rules:
 1. Keep proper names, mathematical symbols, variable names UNCHANGED.
-2. [FORMULA_N] placeholders MUST be preserved exactly as-is — do not modify, translate, or remove them.
+2. [FORMULA_N] and [MDC_N] placeholders MUST be preserved exactly as-is — do not modify, translate, or remove them.
 3. Output ONLY the Chinese translation, no explanations.
 
 English text:

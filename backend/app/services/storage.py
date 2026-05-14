@@ -188,11 +188,16 @@ class StorageService:
 
         project = self.get_project(project_id)
         if project:
+            all_translations = self.list_translations(project_id)
+            total_tok = sum(t.get("tokens_used", 0) for t in all_translations)
+            total_prompt = sum(t.get("prompt_tokens", 0) for t in all_translations)
+            total_comp = sum(t.get("completion_tokens", 0) for t in all_translations)
+            total_cached = sum(t.get("cached_tokens", 0) for t in all_translations)
             self.update_project(project_id, {
-                "total_tokens": project.get("total_tokens", 0) + tokens_used,
-                "total_prompt_tokens": project.get("total_prompt_tokens", 0) + prompt_tokens,
-                "total_completion_tokens": project.get("total_completion_tokens", 0) + completion_tokens,
-                "total_cached_tokens": project.get("total_cached_tokens", 0) + cached_tokens,
+                "total_tokens": total_tok,
+                "total_prompt_tokens": total_prompt,
+                "total_completion_tokens": total_comp,
+                "total_cached_tokens": total_cached,
             })
         return translation
 

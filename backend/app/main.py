@@ -33,14 +33,26 @@ def health():
 
 @app.get("/api/stats")
 def get_stats():
-    from app.services.pricing import calculate_cost
+    from app.services.pricing import calculate_cost, normalize_translation_tokens
 
     projects = storage.list_projects()
-    total_docs = sum(p.get("file_count", 0) for p in projects)
-    total_tokens = sum(p.get("total_tokens", 0) for p in projects)
-    total_prompt_tokens = sum(p.get("total_prompt_tokens", 0) for p in projects)
-    total_completion_tokens = sum(p.get("total_completion_tokens", 0) for p in projects)
-    total_cached_tokens = sum(p.get("total_cached_tokens", 0) for p in projects)
+    total_docs = 0
+    total_tokens = 0
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_cached_tokens = 0
+
+    for p in projects:
+        pid = p["id"]
+        total_docs += len(storage.list_documents(pid))
+        translations = storage.list_translations(pid)
+        for t in translations:
+            tok, prompt, comp, cached = normalize_translation_tokens(t)
+            total_tokens += tok
+            total_prompt_tokens += prompt
+            total_completion_tokens += comp
+            total_cached_tokens += cached
+
     total_cost = calculate_cost(total_prompt_tokens, total_completion_tokens, total_cached_tokens)
     return {
         "data": {

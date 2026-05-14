@@ -106,9 +106,10 @@ interface AppState {
 
   tokenBreakdown: Array<{
     project_id: string; project_name: string; document_count: number
-    translation_count: number; tokens_used: number
+    translation_count: number; tokens_used: number; cost: number
   }> | null
   totalTokenUsage: number
+  totalTokenCost: number
   tokenLoading: boolean
   tokenDialogOpen: boolean
   setTokenDialogOpen: (open: boolean) => void
@@ -867,6 +868,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   tokenBreakdown: null,
   totalTokenUsage: 0,
+  totalTokenCost: 0,
   tokenLoading: false,
   tokenDialogOpen: false,
   setTokenDialogOpen: (open) => set({ tokenDialogOpen: open }),
@@ -878,6 +880,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         tokenBreakdown: res.data.project_breakdown || [],
         totalTokenUsage: res.data.total_tokens || 0,
+        totalTokenCost: (res.data as any).total_cost || 0,
         tokenLoading: false,
       })
     } catch (err) {

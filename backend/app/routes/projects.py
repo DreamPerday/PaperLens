@@ -542,7 +542,7 @@ def delete_orphan_files():
 
 @router.get("/token-stats")
 def get_token_stats():
-    from app.services.pricing import calculate_cost
+    from app.services.pricing import calculate_cost, normalize_translation_tokens
 
     projects = storage_service.list_projects()
     project_breakdown = []
@@ -554,10 +554,16 @@ def get_token_stats():
     for project in projects:
         pid = project["id"]
         translations = storage_service.list_translations(pid)
-        proj_tokens = sum(t.get("tokens_used", 0) for t in translations)
-        proj_prompt = sum(t.get("prompt_tokens", 0) for t in translations)
-        proj_completion = sum(t.get("completion_tokens", 0) for t in translations)
-        proj_cached = sum(t.get("cached_tokens", 0) for t in translations)
+        proj_tokens = 0
+        proj_prompt = 0
+        proj_completion = 0
+        proj_cached = 0
+        for t in translations:
+            tok, prompt, comp, cached = normalize_translation_tokens(t)
+            proj_tokens += tok
+            proj_prompt += prompt
+            proj_completion += comp
+            proj_cached += cached
         total_tokens += proj_tokens
         total_prompt_tokens += proj_prompt
         total_completion_tokens += proj_completion

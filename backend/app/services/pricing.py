@@ -14,6 +14,38 @@ PRICING = {
     },
 }
 
+# Translation input:output ratio estimate for legacy records
+_INPUT_RATIO = 0.60
+
+
+def estimate_segmented_tokens(tokens_used: int) -> tuple[int, int, int]:
+    """Estimate (prompt, completion, cached) from total tokens_used.
+
+    For legacy translation records that only have tokens_used without
+    segmented fields. Translation typically has input:output ≈ 3:2.
+    No cache-hit info available for legacy data.
+    """
+    if tokens_used <= 0:
+        return (0, 0, 0)
+    prompt = int(tokens_used * _INPUT_RATIO)
+    completion = tokens_used - prompt
+    return (prompt, completion, 0)
+
+
+def normalize_translation_tokens(record: dict) -> tuple[int, int, int, int]:
+    """Extract (total, prompt, completion, cached) from a translation record.
+
+    Falls back to estimation from tokens_used for legacy records without
+    segmented fields.
+    """
+    total = record.get("tokens_used", 0)
+    prompt = record.get("prompt_tokens", 0)
+    completion = record.get("completion_tokens", 0)
+    cached = record.get("cached_tokens", 0)
+    if prompt == 0 and completion == 0 and total > 0:
+        prompt, completion, cached = estimate_segmented_tokens(total)
+    return (total, prompt, completion, cached)
+
 
 def calculate_cost(
     prompt_tokens: int,
