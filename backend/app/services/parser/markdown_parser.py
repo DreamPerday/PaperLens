@@ -39,6 +39,9 @@ TABLE_PATTERN = re.compile(
 
 HTML_TAG_PATTERN = re.compile(r'^<(p|div|pre|table|section|article|header|footer|main|nav|aside|figure|form)[\s>]', re.IGNORECASE)
 
+STANDALONE_IMG_MD = re.compile(r'^!\[([^\]]*)\]\(([^)]+)\)$')
+STANDALONE_IMG_HTML = re.compile(r'^<img\s+[^>]*?src="([^"]+)"[^>]*?/?>$', re.IGNORECASE)
+
 
 class MarkdownParser:
 
@@ -114,6 +117,29 @@ class MarkdownParser:
             if block:
                 blocks.append(block)
                 i += consumed
+                continue
+
+            img_match = STANDALONE_IMG_MD.match(stripped)
+            if img_match:
+                blocks.append(Block(
+                    type=BlockType.image,
+                    content=img_match.group(1),
+                    meta={"url": img_match.group(2), "alt": img_match.group(1)}
+                ))
+                i += 1
+                continue
+
+            img_match = STANDALONE_IMG_HTML.match(stripped)
+            if img_match:
+                src = img_match.group(1)
+                alt_match = re.search(r'alt="([^"]*)"', stripped)
+                alt = alt_match.group(1) if alt_match else ""
+                blocks.append(Block(
+                    type=BlockType.image,
+                    content=alt,
+                    meta={"url": src, "alt": alt}
+                ))
+                i += 1
                 continue
 
             block, consumed = self._try_parse_paragraph(lines, i)
@@ -364,6 +390,8 @@ class MarkdownParser:
                 break
             if MATH_BLOCK_PATTERN.match(stripped):
                 break
+            if STANDALONE_IMG_MD.match(stripped) or STANDALONE_IMG_HTML.match(stripped):
+                break
             if re.match(r'^\s*$', lines[i]):
                 break
 
@@ -515,6 +543,17 @@ class MarkdownParser:
                 content=alt,
                 alt=alt,
                 url=url
+            ), match.end()
+        match = re.match(r'<img\s+[^>]*?src="([^"]+)"[^>]*?/?>', text, re.IGNORECASE)
+        if match:
+            src = match.group(1)
+            alt_match = re.search(r'alt="([^"]*)"', match.group(0))
+            alt = alt_match.group(1) if alt_match else ""
+            return InlineNode(
+                type=InlineType.image,
+                content=alt,
+                alt=alt,
+                url=src
             ), match.end()
         return None, 0
 

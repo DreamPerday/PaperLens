@@ -162,6 +162,25 @@ npx playwright install chromium
 npm run dev  # http://localhost:3000
 ```
 
+### 环境变量
+
+**后端** (`backend/.env`)：
+```env
+DEEPSEEK_API_KEY=your_api_key_here
+DEEPSEEK_MODEL=deepseek-v4-flash
+CORS_ORIGINS=http://localhost:3000,http://localhost:3001
+LAYOUT_PARSING_API_URL=https://jay3t01093w9y398.aistudio-app.com/layout-parsing
+LAYOUT_PARSING_TOKEN=your_layout_parsing_token_here
+```
+- `DEEPSEEK_API_KEY`：DeepSeek API Key，[deepseek.com](https://platform.deepseek.com/api_keys) 获取
+- `LAYOUT_PARSING_TOKEN`：PaddleOCR 版面解析 Token，[AI Studio PaddleOCR](https://aistudio.baidu.com/paddleocr) 获取
+- `LAYOUT_PARSING_API_URL`：PaddleOCR 版面解析 API 地址（通常无需修改）
+
+**前端** (`frontend/.env.local`)：
+```env
+NEXT_PUBLIC_API_PORT=8000
+```
+
 前端 `next.config.js` 会自动将 `/api/*` 和 `/static/*` 请求代理到后端（通过 `NEXT_PUBLIC_API_PORT` 指定端口），开发时直接访问 `localhost:3000` 即可。
 
 ## API 接口总览

@@ -55,7 +55,16 @@ class HTMLRenderer:
                 label_html = f'<div class="math-env-label">{self._escape_html(env_label)}</div>' if env_label else ''
                 return f'<div class="math-block math-display">{label_html}{katex_html}</div>'
             else:
-                return f'<div class="math-block">\\[{block.content}\\]</div>'
+                raw = block.content.strip()
+                if raw.startswith('$$'):
+                    raw = raw[2:].strip()
+                    if raw.endswith('$$'):
+                        raw = raw[:-2].strip()
+                elif raw.startswith('\\['):
+                    raw = raw[2:].strip()
+                    if raw.endswith('\\]'):
+                        raw = raw[:-2].strip()
+                return f'<div class="math-block">\\[{raw}\\]</div>'
 
         elif block.type == BlockType.bullet_list:
             items: List[str] = []
@@ -159,11 +168,26 @@ class HTMLRenderer:
             return f'<code>{self._escape_html(node.content)}</code>'
 
         elif node.type == InlineType.math:
+            raw = node.content.strip()
+            if raw.startswith('$') and raw.endswith('$'):
+                raw = raw[1:-1].strip()
+            elif raw.startswith('\\(') and raw.endswith('\\)'):
+                raw = raw[2:-2].strip()
             if self.ssr_math:
-                katex_html = render_math_to_html(node.content, display_mode=False)
+                katex_html = render_math_to_html(raw, display_mode=False)
                 return f'<span class="math-inline">{katex_html}</span>'
             else:
-                return f'<span class="math-inline">\\({node.content}\\)</span>'
+                return f'<span class="math-inline">\\({raw}\\)</span>'
+
+        elif node.type == InlineType.inline_math:
+            latex = node.meta.get("latex", node.content)
+            safe_latex = latex.replace("<", "&lt;").replace(">", "&gt;")
+            return f"\\({safe_latex}\\)"
+
+        elif node.type == InlineType.display_math:
+            latex = node.meta.get("latex", node.content)
+            safe_latex = latex.replace("<", "&lt;").replace(">", "&gt;")
+            return f"\\[{safe_latex}\\]"
 
         elif node.type == InlineType.link:
             inner = self._render_inlines(node.children) if node.children else self._escape_html(node.content)
@@ -173,7 +197,7 @@ class HTMLRenderer:
         elif node.type == InlineType.image:
             alt = self._escape_html_attr(node.alt or '')
             src = self._escape_html_attr(node.url)
-            return f'<figure class="figure"><img src="{src}" alt="{alt}" /></figure>'
+            return f'<img src="{src}" alt="{alt}" class="inline-image" />'
 
         elif node.type == InlineType.soft_break:
             return '<br />'

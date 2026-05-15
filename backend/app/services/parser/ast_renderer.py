@@ -66,6 +66,11 @@ class MarkdownRenderer:
         elif block.type == BlockType.html_block:
             return block.content
 
+        elif block.type == BlockType.image:
+            alt = block.content or ""
+            url = block.meta.get("url", "")
+            return f"![{alt}]({url})"
+
         elif block.type == BlockType.list_item:
             return self._render_inlines(block.inlines)
 

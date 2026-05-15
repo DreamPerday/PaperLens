@@ -13,9 +13,12 @@ class InlineType(str, Enum):
     strikethrough = "strikethrough"
     code = "code"
     math = "math"
+    inline_math = "inline_math"
+    display_math = "display_math"
     link = "link"
     image = "image"
     soft_break = "soft_break"
+    html_block = "html_block"
 
 
 class InlineNode(BaseModel):

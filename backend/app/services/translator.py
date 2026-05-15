@@ -26,7 +26,7 @@ Markdown markers:
 - 1. numbered / 2. numbered list markers: keep "N. " prefix, translate item text
 - > blockquotes: keep > prefix, translate quoted text
 - ``` code blocks ```: keep block delimiters, translate code content
-- | markdown table rows |: keep pipe-separated structure exactly
+- [TP_N] pipe structure markers for tables: treat as invisible structural anchors, MUST NOT remove or reorder
 - [link text](url): translate text between [ and ], keep URL in ( )
 - Blank lines between paragraphs: preserve paragraph separation
 
@@ -34,6 +34,14 @@ HTML tags: ALL [HTML_N] placeholders represent HTML tags. You MUST:
 - Keep [HTML_N] EXACTLY as-is — DO NOT modify, translate, remove, or reorder them
 - Only translate the visible text between [HTML_N] placeholders
 - HTML table tags ([HTML_N] marking <table>, <tr>, <td>, <th>, etc.) MUST appear in your output in their original positions
+
+Table rules [CRITICAL]:
+- [TP_N] markers represent table pipe (|) characters that define cell boundaries
+- You MUST preserve EVERY [TP_N] marker in its EXACT position — they are structural anchors
+- Translate ONLY the text content between [TP_N] markers — never modify the markers themselves
+- Every data row MUST appear in the output — do not skip, summarize, or merge any rows
+- The table alignment separator row (containing :--- patterns) MUST be preserved
+- If the input table has N rows (including header and separator), the output MUST also have exactly N rows
 
 Rules:
 1. Keep proper names, mathematical symbols, variable names UNCHANGED.
@@ -75,6 +83,7 @@ NORMAL_CHUNK_MAX = 4500
 MATH_HEAVY_CHUNK_MIN = 2000
 MATH_HEAVY_CHUNK_MAX = 3000
 MATH_DENSITY_THRESHOLD = 0.15
+TABLE_MAX_TOKENS = 8192
 
 # Atomic HTML/XML block patterns — these must NEVER be split across chunks
 HTML_BLOCK_RE = re.compile(
@@ -192,6 +201,26 @@ def _protect_html_tags(text: str) -> tuple:
 def _restore_html_tags(text: str, markers: list) -> str:
     for i, m in enumerate(markers):
         text = text.replace(f'[HTML_{i}]', m)
+    return text
+
+
+TABLE_PIPE_RE = re.compile(r'\|')
+
+
+def _protect_table_pipes(text: str) -> tuple:
+    markers: list[str] = []
+
+    def _replace(m):
+        markers.append('|')
+        return f'[TP_{len(markers) - 1}]'
+
+    text = TABLE_PIPE_RE.sub(_replace, text)
+    return text, markers
+
+
+def _restore_table_pipes(text: str, markers: list) -> str:
+    for i, m in enumerate(markers):
+        text = text.replace(f'[TP_{i}]', m)
     return text
 
 
@@ -370,7 +399,7 @@ def _rich_text_factor(text: str) -> float:
     return min(0.9, total / max(len(text), 1))
 
 
-def _validate_chunk_completeness(original: str, translated: str, chunk_idx: int) -> dict:
+def _validate_chunk_completeness(original: str, translated: str, chunk_idx: int, block_type: str = "") -> dict:
     """Validate that a translated chunk hasn't lost significant content.
 
     Returns dict with validation metrics.
@@ -407,6 +436,25 @@ def _validate_chunk_completeness(original: str, translated: str, chunk_idx: int)
     if orig_paras > 1 and trans_paras < orig_paras * 0.5:
         warnings.append(f"paragraph count dropped: orig={orig_paras} trans={trans_paras}")
 
+    is_table = (block_type == "table" or block_type == "html_table")
+    if is_table:
+        orig_rows = [r for r in original.strip().split('\n') if r.strip().startswith('|')]
+        trans_rows = [r for r in translated.strip().split('\n') if r.strip().startswith('|')]
+        if len(orig_rows) > 1 and len(trans_rows) < len(orig_rows) * 0.5:
+            issues.append(f"table rows dropped: orig={len(orig_rows)} trans={len(trans_rows)}")
+        elif orig_rows and len(trans_rows) != len(orig_rows):
+            warnings.append(f"table row count mismatch: orig={len(orig_rows)} trans={len(trans_rows)}")
+
+        orig_pipe_count = original.count('|')
+        trans_pipe_count = translated.count('|')
+        if orig_pipe_count > 4 and trans_pipe_count < orig_pipe_count * 0.5:
+            issues.append(f"table pipe count dropped: orig={orig_pipe_count} trans={trans_pipe_count}")
+        elif orig_pipe_count > 4 and trans_pipe_count != orig_pipe_count:
+            warnings.append(f"table pipe count mismatch: orig={orig_pipe_count} trans={trans_pipe_count}")
+
+        if ':---' in original and ':---' not in translated and '---' not in translated:
+            issues.append("table alignment separator lost")
+
     return {
         "ok": len(issues) == 0,
         "orig_len": orig_len,
@@ -425,6 +473,7 @@ async def _translate_single_chunk(
     chunk_idx: int,
     total: int,
     max_retries: int = MAX_RETRIES,
+    block_type: str = "",
 ) -> dict:
     async with sem:
         if should_skip(chunk_text):
@@ -432,8 +481,12 @@ async def _translate_single_chunk(
 
         api_url = f"{settings.deepseek_base_url}/v1/chat/completions"
 
+        is_table = (block_type == "table" or block_type == "html_table")
+
         protected_text, formulas = _protect_formulas(chunk_text)
         protected_text, html_tags = _protect_html_tags(protected_text)
+        if is_table:
+            protected_text, table_pipes = _protect_table_pipes(protected_text)
         protected_text, format_markers = _protect_formatting(protected_text)
         prompt = TRANSLATE_PROMPT.format(text=protected_text)
 
@@ -442,11 +495,13 @@ async def _translate_single_chunk(
             "Content-Type": "application/json"
         }
 
+        max_tokens_val = TABLE_MAX_TOKENS if is_table else 4096
+
         payload = {
             "model": settings.deepseek_model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.3,
-            "max_tokens": 4096,
+            "max_tokens": max_tokens_val,
             "stream": False,
         }
 
@@ -470,6 +525,8 @@ async def _translate_single_chunk(
                     translated = _restore_formatting(translated, format_markers)
                     translated = _restore_html_tags(translated, html_tags)
                     translated = _restore_formulas(translated, formulas)
+                    if is_table:
+                        translated = _restore_table_pipes(translated, table_pipes)
                     usage = result.get("usage", {})
                     tokens = usage.get("total_tokens", len(chunk_text) // 2)
                     prompt_tokens = usage.get("prompt_tokens", 0)
@@ -686,7 +743,7 @@ async def translate_document_async(
     for i, chunk in enumerate(paragraphs):
         if chunk["skip_translate"]:
             skip_chunks.append(i)
-        translate_tasks.append((i, chunk["text"]))
+        translate_tasks.append((i, chunk["text"], chunk.get("block_type", "")))
 
     total_translatable = len(translate_tasks) - len(skip_chunks)
 
@@ -702,17 +759,18 @@ async def translate_document_async(
     completed_count = 0
 
     async with httpx.AsyncClient() as client:
-        async def translate_one(idx: int, chunk_text: str) -> dict:
+        async def translate_one(idx: int, chunk_text: str, block_type: str = "") -> dict:
             nonlocal completed_count
             result = await _translate_single_chunk(
-                client, chunk_text, sem, idx, total_translatable
+                client, chunk_text, sem, idx, total_translatable,
+                block_type=block_type,
             )
             completed_count += 1
             if on_chunk_complete:
                 await on_chunk_complete(idx, completed_count, result.get("text", ""))
             return result
 
-        tasks = [translate_one(i, t) for i, t in translate_tasks]
+        tasks = [translate_one(i, t, bt) for i, t, bt in translate_tasks]
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     results = []
@@ -730,8 +788,10 @@ async def translate_document_async(
     for i, r in enumerate(results):
         if r.get("index", -1) in skip_chunks:
             continue
-        orig_text = paragraphs[r["index"]]["text"] if r.get("index", -1) >= 0 else ""
-        validation = _validate_chunk_completeness(orig_text, r.get("text", ""), r.get("index", -1))
+        chunk_idx = r.get("index", -1)
+        orig_text = paragraphs[chunk_idx]["text"] if chunk_idx >= 0 else ""
+        block_type = paragraphs[chunk_idx].get("block_type", "") if chunk_idx >= 0 else ""
+        validation = _validate_chunk_completeness(orig_text, r.get("text", ""), chunk_idx, block_type)
         if not validation["ok"] or validation["warnings"]:
             total_issues += len(validation["issues"]) + len(validation["warnings"])
             validation_log.append({

@@ -45,7 +45,7 @@ async def _get_document_content(project_id: str, doc_id: str, include_original: 
 IMG_PATTERN_HTML = re.compile(r'(<img[^>]+src="([^"]+)"[^>]*\/?>)', re.IGNORECASE)
 IMG_PATTERN_MD = re.compile(r'(!\[([^\]]*)\]\(([^)]+)\))')
 
-def _enrich_translation_with_images(original_text: str, translated_text: str, format_type: str) -> str:
+def _enrich_translation_with_images(original_text: str, translated_text: str) -> str:
     all_images = []
     for m in IMG_PATTERN_HTML.finditer(original_text):
         src = m.group(2)
@@ -95,10 +95,7 @@ def _enrich_translation_with_images(original_text: str, translated_text: str, fo
         parts.append(para)
         for img_tuple in assigned.get(i, []):
             kind, src, alt, _ = img_tuple
-            if format_type == "md":
-                parts.append(f"\n\n![{alt}]({src})\n")
-            else:
-                parts.append(f'\n\n<img src="{src}" alt="{alt}" />\n')
+            parts.append(f"\n\n![{alt}]({src})\n")
     
     return "\n\n".join(parts)
 
@@ -130,7 +127,7 @@ async def export_document(
     )
 
     if include_translation and translated_text:
-        translated_text = _enrich_translation_with_images(original_text, translated_text, format_type)
+        translated_text = _enrich_translation_with_images(original_text, translated_text)
 
     exporter = exporters[format_type]
     title = doc.get("original_name", "Translation").replace(".pdf", "").replace(".docx", "")

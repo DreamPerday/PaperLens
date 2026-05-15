@@ -43,11 +43,6 @@ class HTMLExporter:
                     watermark_pos: str = "bottom", cover_page: bool = False, subtitle: str = "",
                     watermark_tiled: bool = False, **kwargs) -> Dict[str, str]:
 
-        if embed_images:
-            original_text = await self.asset_manager.embed_images(original_text, doc_id)
-            self.asset_manager.clear_processed_only()
-            translated_text = await self.asset_manager.embed_images(translated_text, doc_id)
-
         parser = MarkdownParser()
 
         original_html = ""
@@ -59,6 +54,13 @@ class HTMLExporter:
         if translated_text:
             ast_doc = parser.parse(translated_text)
             translated_html = render_to_html(ast_doc)
+
+        if embed_images:
+            if original_html:
+                original_html = await self.asset_manager.embed_images(original_html, doc_id)
+                self.asset_manager.clear_processed_only()
+            if translated_html:
+                translated_html = await self.asset_manager.embed_images(translated_html, doc_id)
 
         toc_content = self._generate_toc(original_html + translated_html) if include_toc else ""
 
