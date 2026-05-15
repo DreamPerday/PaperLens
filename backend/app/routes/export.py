@@ -1,10 +1,8 @@
 from fastapi import APIRouter, HTTPException, Body, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from app.services.export import (
-    MarkdownExporter,
     HTMLExporter,
     PDFExporter,
-    DOCXExporter
 )
 from app.services.storage import storage_service
 from app.utils.parser import DocumentParser
@@ -15,10 +13,8 @@ from pathlib import Path
 router = APIRouter(prefix="/api/projects", tags=["export"])
 
 exporters = {
-    "md": MarkdownExporter(),
     "html": HTMLExporter(),
     "pdf": PDFExporter(),
-    "docx": DOCXExporter(),
 }
 
 async def _get_document_content(project_id: str, doc_id: str, include_original: bool, include_translation: bool):
@@ -180,7 +176,7 @@ async def export_document(
 def get_supported_formats():
     return {
         "data": {
-            "formats": ["md", "html", "pdf", "docx"],
+            "formats": ["html", "pdf"],
             "options": {
                 "themes": ["academic", "modern", "dark", "compact"],
                 "page_sizes": ["A4", "Letter"],

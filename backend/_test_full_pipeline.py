@@ -255,83 +255,6 @@ async def test_html_exporter():
     return all_pass
 
 
-async def test_markdown_exporter():
-    """Test full Markdown export pipeline"""
-    from app.services.export.markdown_exporter import MarkdownExporter
-
-    exporter = MarkdownExporter()
-    result = await exporter.export(
-        original_text=TEST_CONTENT,
-        translated_text=TEST_CONTENT,
-        doc_id="test_full",
-        embed_images=False
-    )
-
-    md = result["content"]
-
-    print("\n" + "=" * 60)
-    print("TEST 5: Markdown Exporter Full Pipeline")
-    print("=" * 60)
-
-    all_pass = True
-
-    no_raw_img = not bool(re.search(r'<img\s+', md))
-    print(f"  {'[PASS]' if no_raw_img else '[FAIL]'} No raw HTML img tags in MD output")
-
-    has_md_img = bool(re.search(r'!\[.*\]\(', md))
-    print(f"  {'[PASS]' if has_md_img else '[FAIL]'} Markdown image syntax found")
-
-    has_inline_math = bool(re.search(r'\$.*\$', md))
-    print(f"  {'[PASS]' if has_inline_math else '[FAIL]'} Inline math preserved")
-
-    has_display_math = bool(re.search(r'\$\$', md)) or bool(re.search(r'\\\[', md))
-    print(f"  {'[PASS]' if has_display_math else '[FAIL]'} Display math preserved")
-
-    if not has_md_img:
-        all_pass = False
-
-    if all_pass:
-        print("  PASSED")
-    return all_pass
-
-
-async def test_docx_exporter():
-    """Test DOCX export pipeline"""
-    from app.services.export.docx_exporter import DOCXExporter
-
-    exporter = DOCXExporter()
-    result = await exporter.export(
-        original_text=TEST_CONTENT,
-        translated_text=TEST_CONTENT,
-        doc_id="test_full",
-        embed_images=False
-    )
-
-    content = result["content"]
-
-    print("\n" + "=" * 60)
-    print("TEST 6: DOCX Exporter Full Pipeline")
-    print("=" * 60)
-
-    all_pass = True
-
-    has_content = len(content) > 1000
-    print(f"  {'[PASS]' if has_content else '[FAIL]'} Output > 1KB (actual: {len(content)} bytes)")
-
-    is_zip = content[:2] == b'PK'
-    print(f"  {'[PASS]' if is_zip else '[FAIL]'} ZIP magic bytes (PK)")
-
-    has_mime = result.get("mime") == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    print(f"  {'[PASS]' if has_mime else '[FAIL]'} Correct MIME type")
-
-    if not has_content:
-        all_pass = False
-
-    if all_pass:
-        print("  PASSED")
-    return all_pass
-
-
 async def test_pdf_exporter():
     """Test PDF export pipeline"""
     try:
@@ -395,8 +318,6 @@ async def main():
     results.append(("HTML Renderer (SSR)", test_html_renderer()))
     results.append(("Markdown Renderer", test_markdown_renderer()))
     results.append(("HTML Exporter Pipeline", await test_html_exporter()))
-    results.append(("Markdown Exporter Pipeline", await test_markdown_exporter()))
-    results.append(("DOCX Exporter Pipeline", await test_docx_exporter()))
     results.append(("PDF Exporter Pipeline", await test_pdf_exporter()))
 
     print("\n" + "=" * 60)

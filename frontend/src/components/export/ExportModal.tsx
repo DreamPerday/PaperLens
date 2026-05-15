@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react"
-import { Download, FileText, FileCode, FileImage, FileType, Check, Loader2, AlertCircle } from "lucide-react"
+import { Download, FileCode, FileImage, Check, Loader2, AlertCircle } from "lucide-react"
 import { Button, Dialog } from "@/components/ui"
 import { api } from "@/lib/api"
-import type { ExportOptions, ExportFormat } from "@/types"
+import type { ExportFormat } from "@/types"
 
 interface ExportModalProps {
   open: boolean
@@ -11,18 +11,14 @@ interface ExportModalProps {
   docId: string | undefined
 }
 
-const formatIcons: Record<string, typeof FileText> = {
-  md: FileText,
+const formatIcons: Record<string, typeof FileCode> = {
   html: FileCode,
   pdf: FileImage,
-  docx: FileType,
 }
 
 const formatLabels: Record<string, string> = {
-  md: "Markdown",
   html: "HTML",
   pdf: "PDF",
-  docx: "DOCX",
 }
 
 const themeLabels: Record<string, string> = {
@@ -96,7 +92,7 @@ export function ExportModal({ open, onClose, projectId, docId }: ExportModalProp
         }
       }, 500)
 
-      const binaryFormats = ["pdf", "docx"]
+      const binaryFormats = ["pdf"]
       const isBinary = binaryFormats.includes(format)
 
       if (isBinary) {
@@ -158,8 +154,8 @@ export function ExportModal({ open, onClose, projectId, docId }: ExportModalProp
       <div className="space-y-6">
         <div>
           <label className="block mb-2 text-sm font-medium text-surface-900 dark:text-surface-100">导出格式</label>
-          <div className="grid grid-cols-4 gap-2">
-            {(["md", "html", "pdf", "docx"] as ExportFormat[]).map((fmt) => {
+          <div className="grid grid-cols-2 gap-2">
+            {(["html", "pdf"] as ExportFormat[]).map((fmt) => {
               const Icon = formatIcons[fmt]
               return (
                 <button
@@ -237,7 +233,7 @@ export function ExportModal({ open, onClose, projectId, docId }: ExportModalProp
           </div>
         )}
 
-        {(format === "pdf" || format === "docx") && (
+        {format === "pdf" && (
           <div>
             <label className="block mb-2 text-sm font-medium text-surface-900 dark:text-surface-100">页面大小</label>
             <select

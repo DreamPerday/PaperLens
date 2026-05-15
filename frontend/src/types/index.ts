@@ -78,7 +78,7 @@ export interface ReaderSettings {
   syncScroll: boolean
 }
 
-export type ExportFormat = "md" | "html" | "pdf" | "docx"
+export type ExportFormat = "html" | "pdf"
 
 export interface ExportOptions {
   format: ExportFormat
