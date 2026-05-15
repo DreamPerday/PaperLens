@@ -67,6 +67,7 @@ export function FileUploadDialog() {
       await loadProjects()
       console.log(`[UPLOAD] All ${files.length} files uploaded successfully`)
       setTimeout(() => {
+        setUploading(false)
         setFiles([])
         setUploadDialogOpen(false)
         setCurrentUploadName("")
