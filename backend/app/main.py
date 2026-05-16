@@ -1,5 +1,8 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
+from starlette.requests import Request
 from app.config import settings
 from app.routes import projects, export
 import os
@@ -15,23 +18,30 @@ os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
-@app.middleware("http")
-async def cors_middleware(request, call_next):
-    if request.method == "OPTIONS":
-        from starlette.responses import Response
-        response = Response()
-    else:
-        response = await call_next(request)
+class CORSProxyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method == "OPTIONS":
+            response = Response()
+        else:
+            response = await call_next(request)
 
-    origin = request.headers.get("origin", "*")
-    response.headers["Access-Control-Allow-Origin"] = origin
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, X-Requested-With, Cache-Control, DNT, If-Modified-Since, Keep-Alive, Origin, User-Agent"
-    response.headers["Access-Control-Max-Age"] = "86400"
-    response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
-    return response
+        origin = request.headers.get("origin", "")
+        allowed_origins = settings.cors_origin_list
+        if origin in allowed_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+        elif not origin:
+            response.headers["Access-Control-Allow-Origin"] = "*"
+        else:
+            response.headers["Access-Control-Allow-Origin"] = allowed_origins[0] if allowed_origins else "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, X-Requested-With, Cache-Control, DNT, If-Modified-Since, Keep-Alive, Origin, User-Agent"
+        response.headers["Access-Control-Max-Age"] = "86400"
+        response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
+        return response
 
+
+app.add_middleware(CORSProxyMiddleware)
 
 app.include_router(projects.router)
 app.include_router(export.router)
