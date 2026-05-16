@@ -46,9 +46,7 @@ translation-platform/
 │   │       └── export/                # 导出器
 │   │           ├── __init__.py
 │   │           ├── html_exporter.py   # 导出 HTML 文件
-│   │           ├── markdown_exporter.py # 导出 Markdown 文件
 │   │           ├── pdf_exporter.py    # 导出 PDF (Playwright)
-│   │           ├── docx_exporter.py   # 导出 DOCX 文件
 │   │           └── template_manager.py # HTML 导出模板管理 (4 种主题)
 │   ├── storage/                       # 运行时数据
 │   │   ├── projects.json              # 项目索引
@@ -114,12 +112,12 @@ translation-platform/
 - **翻译缓存**：刷新页面自动加载，不丢失结果
 
 ### 4. 导出功能
-- **格式**：HTML、PDF (Playwright)、Markdown、DOCX
+- **格式**：HTML、PDF (Playwright)
 - **模板**：4 种主题 (academic / modern / dark / compact)
-- **数学公式**：所有格式均通过 KaTeX 服务端预渲染，PDF/HTML/DOCX 一致
+- **数学公式**：KaTeX 服务端预渲染 (SSR)，在 HTML/PDF 中一致显示
 - **图片嵌入**：自动 Base64 嵌入，离线可用
 - **PDF 增强**：三阶段图片加载、封面页、水印、目录生成
-- **DOCX 增强**：图片支持、公式斜体居中、列表/引用行内格式化
+- **HTML 增强**：最大宽度 900px 居中排版、表格自适应宽度
 
 ### 5. Token 用量统计与定价
 - **细分字段**：缓存命中输入、缓存未命中输入、输出 Token、总 Token

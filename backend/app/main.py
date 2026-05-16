@@ -1,5 +1,4 @@
-from fastapi import FastAPI, WebSocket
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.routes import projects, export
@@ -15,14 +14,24 @@ static_dir = os.path.join(settings.storage_path, "static")
 os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["Content-Disposition"],
-)
+
+@app.middleware("http")
+async def cors_middleware(request, call_next):
+    if request.method == "OPTIONS":
+        from starlette.responses import Response
+        response = Response()
+    else:
+        response = await call_next(request)
+
+    origin = request.headers.get("origin", "*")
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, X-Requested-With, Cache-Control, DNT, If-Modified-Since, Keep-Alive, Origin, User-Agent"
+    response.headers["Access-Control-Max-Age"] = "86400"
+    response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
+    return response
+
 
 app.include_router(projects.router)
 app.include_router(export.router)
